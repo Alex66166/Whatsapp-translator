@@ -5,7 +5,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaile
 import pino from 'pino';
 import QRCode from 'qrcode';
 import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID, createHash } from 'node:crypto';
-import { mkdirSync, createWriteStream, existsSync, unlinkSync, createReadStream } from 'node:fs';
+import { mkdirSync, createWriteStream, existsSync, unlinkSync, createReadStream, renameSync } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
@@ -33,6 +33,11 @@ const columns = new Set(db.prepare('PRAGMA table_info(messages)').all().map(c =>
 if (!columns.has('media_mime')) db.exec('ALTER TABLE messages ADD COLUMN media_mime TEXT');
 if (!columns.has('media_state')) db.exec('ALTER TABLE messages ADD COLUMN media_state TEXT');
 if (!columns.has('media_bytes')) db.exec('ALTER TABLE messages ADD COLUMN media_bytes INTEGER');
+if (!columns.has('source_language')) db.exec('ALTER TABLE messages ADD COLUMN source_language TEXT');
+if (!columns.has('wa_id')) db.exec('ALTER TABLE messages ADD COLUMN wa_id TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS message_wa_id_unique ON messages(jid,wa_id) WHERE wa_id IS NOT NULL');
+// Never resend outgoing on boot: previous WhatsApp delivery might have succeeded.
+db.prepare("UPDATE messages SET state='uncertain' WHERE direction='out' AND state IN ('translating','sending')").run();
 
 
 const stmt = {
@@ -47,7 +52,14 @@ const stmt = {
   stateMsg: db.prepare('UPDATE messages SET state=? WHERE id=?'),
   msg: db.prepare('SELECT * FROM messages WHERE id=?'),
   mediaState: db.prepare('UPDATE messages SET media_state=?,media_mime=?,media_bytes=? WHERE id=?'),
-  mediaUsage: db.prepare("SELECT COALESCE(SUM(media_bytes),0) AS bytes FROM messages WHERE media_state='ready'")
+  mediaUsage: db.prepare("SELECT COALESCE(SUM(media_bytes),0) AS bytes FROM messages WHERE media_state='ready'"),
+  pendingIncoming: db.prepare("SELECT id, original, source_language FROM messages WHERE direction='in' AND state='translating' ORDER BY created_at ASC LIMIT 1"),
+  pendingCount: db.prepare("SELECT COUNT(*) AS n FROM messages WHERE direction='in' AND state='translating'"),
+  setSource: db.prepare('UPDATE messages SET source_language=? WHERE id=?'),
+  duplicateWa: db.prepare('SELECT id FROM messages WHERE jid=? AND wa_id=?'),
+  claimWa: db.prepare('UPDATE messages SET wa_id=? WHERE id=?'),
+  deleteDuplicate: db.prepare('DELETE FROM messages WHERE id=?'),
+  sendingMatch: db.prepare("SELECT id FROM messages WHERE jid=? AND direction='out' AND translated=? AND state IN ('sending','sent','uncertain') AND created_at>? ORDER BY created_at DESC LIMIT 1")
 };
 let wa = null;
 let connection = 'starting';
@@ -56,7 +68,6 @@ let generation = 0;
 let reconnectTimer = null;
 const people = new Map();
 const clients = new Set();
-const work = [];
 let running = false;
 const log = pino({ level: process.env.LOG_LEVEL || 'warn' });
 
@@ -167,10 +178,14 @@ async function runQueue() {
   if (running) return;
   running = true;
   try {
-    while (work.length) {
-      const job = work.shift();
+    // SQLite is the durable translation queue. After restart, unsent incoming
+    // translations resume; outbound messages are NEVER auto-resubmitted.
+    for (;;) {
+      const job = stmt.pendingIncoming.get();
+      if (!job) break;
       try {
-        const translated = await translate(job.text, job.source, job.target);
+        const language = job.source_language || DEFAULT_LANGUAGE;
+        const translated = await translate(job.original, language, 'Russian');
         stmt.updateMsg.run(translated, 'ready', job.id);
       } catch (error) {
         log.warn({ error: error.message }, 'Translation failed');
@@ -178,13 +193,25 @@ async function runQueue() {
       }
       emit();
     }
-  } finally { running = false; }
+  } finally {
+    running = false;
+  }
 }
 function queueIncoming(id, text, target) {
-  if (work.length >= 200) { stmt.stateMsg.run('error', id); return; }
-  work.push({ id, text, source: target, target: 'Russian' });
+  stmt.setSource.run(target, id);
+  if (stmt.pendingCount.get().n > 200) {
+    stmt.stateMsg.run('error', id);
+    return;
+  }
   void runQueue();
 }
+// Attach the acknowledged WhatsApp message ID to the local optimistic entry.
+// A mirror event may arrive before or after sendMessage() resolves.
+const bindOutgoingWaId = db.transaction((id, jid, remoteId) => {
+  const mirror = stmt.duplicateWa.get(jid, remoteId);
+  if (mirror && mirror.id !== id) stmt.deleteDuplicate.run(mirror.id);
+  stmt.claimWa.run(remoteId, id);
+});
 function ingest(message) {
   const jid = message?.key?.remoteJid;
   if (!validChat(jid) || !message?.key?.id || message?.key?.participant) return;
@@ -200,6 +227,21 @@ function ingest(message) {
   if (!chat?.enabled) { emit(); return; }
   const id = jid + '|' + message.key.id;
   const self = !!message.key.fromMe;
+  if (self) {
+    const already = stmt.duplicateWa.get(jid, message.key.id);
+    if (already) return;
+    // Do not create a duplicate for a message from this web client while
+    // WhatsApp is still acknowledging the send; bindOutgoingWaId will
+    // reconcile a mirrored event if it arrives first.
+    const pending = stmt.sendingMatch.get(jid, text || '', Date.now() - 5 * 60000);
+    if (pending) {
+      try { bindOutgoingWaId(pending.id, jid, message.key.id); } catch (err) {
+        log.warn({ error: err.message }, 'Outgoing mirror reconciliation failed');
+      }
+      emit();
+      return;
+    }
+  }
   const result = stmt.addMsg.run(id, jid, self ? 'out' : 'in', text || '',
     self ? text || '' : null, self ? 'sent-original' : text ? 'translating' : 'ready', timeMs);
   if (!result.changes) return;
@@ -208,6 +250,7 @@ function ingest(message) {
     queueImage(id, message, image);
   }
   emit();
+  if (self) stmt.claimWa.run(message.key.id, id);
   if (!self && text?.trim()) queueIncoming(id, text, chat.target_language);
 }
 function scheduleReconnect() {
@@ -411,8 +454,11 @@ app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
     const translated = await translate(original, 'Russian', chat.target_language);
     stmt.updateMsg.run(translated, 'sending', id);
     emit();
+    // This is not safe to retry automatically after interruption.
+    stmt.stateMsg.run('uncertain', id);
     const sent = await wa.sendMessage(jid, { text: translated });
     if (!sent?.key?.id) throw new Error('WhatsApp did not confirm message submission');
+    bindOutgoingWaId(id, jid, sent.key.id);
     stmt.stateMsg.run('sent', id);
     emit();
     return res.json({ ok: true, translated });
@@ -466,5 +512,6 @@ const HOST = process.env.HOST || '127.0.0.1';
 app.listen(PORT, HOST, () => {
   console.log('WhatsApp Translator listening on ' + HOST + ':' + PORT);
   void connectWhatsApp();
+  void runQueue();
 });
 process.on('SIGTERM', () => { db.close(); process.exit(0); });
