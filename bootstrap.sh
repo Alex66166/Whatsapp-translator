@@ -21,7 +21,9 @@ tar -xzf "$WORK/project.tar.gz" --strip-components=1 -C "$WORK/project"
 for file in audit.sh deploy.sh backup.sh server.mjs package.json; do
   [[ -f "$WORK/project/$file" ]] || { echo "В архиве нет $file"; exit 1; }
 done
-bash -n "$WORK/project/audit.sh" "$WORK/project/deploy.sh" "$WORK/project/backup.sh"
+for script in audit.sh deploy.sh backup.sh restore.sh; do
+  bash -n "$WORK/project/$script" || { echo "Ошибка синтаксиса $script"; exit 1; }
+done
 
 REPORT_DIR="/root/whatsapp-translator-audits"
 install -d -m 700 "$REPORT_DIR"
@@ -87,6 +89,10 @@ for service in nginx apache2 caddy; do
 done
 if [[ -f "$APP_DIR/.env" ]]; then
   PROXY="manual"; WHY="Обнаружена прежняя установка; сохраняем существующую конфигурацию HTTPS."
+fi
+if [[ "$PROXY" == "nginx" && -d /etc/nginx/sites-enabled ]] &&
+  find /etc/nginx/sites-enabled -mindepth 1 -maxdepth 1 | grep -q .; then
+  PROXY="manual"; WHY="Обнаружены конфигурации Nginx, требуется согласование с действующими сайтами."
 fi
 echo
 echo "=== РЕКОМЕНДУЕМАЯ КОНФИГУРАЦИЯ ==="
