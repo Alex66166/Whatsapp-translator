@@ -85,7 +85,8 @@ UMask=0077
 WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
-systemctl enable --now "$SERVICE"
+systemctl enable "$SERVICE"
+systemctl restart "$SERVICE"
 
 echo "Configuring Nginx & automatic HTTPS..."
 install -d -m 755 /var/www/letsencrypt/.well-known/acme-challenge
