@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Private WhatsApp translation web client (one account, multiple chats)",
-  "engines": { "node": ">=22.0.0" },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check public/app.js && node --check lib/translate.mjs",
@@ -17,5 +19,8 @@
     "express": "^4.21.2",
     "pino": "^9.9.0",
     "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
   }
 }
