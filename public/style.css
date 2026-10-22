@@ -1,0 +1,53 @@
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#203230;background:#e8eeee;font-synthesis:none}
+*{box-sizing:border-box}body{margin:0}button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.48}
+[hidden]{display:none!important}.shell{height:100dvh;min-height:440px;display:flex;flex-direction:column;max-width:1700px;margin:auto;background:#fff;box-shadow:0 0 28px #0b45311b}
+.topbar{height:62px;flex-shrink:0;background:#117f64;color:white;display:flex;align-items:center;justify-content:space-between;padding:0 20px;gap:10px}
+.brand{font-weight:800;letter-spacing:-.25px;font-size:18px}.top-actions{display:flex;align-items:center;gap:14px}.connection{font-size:12px;white-space:nowrap;color:#fff}.connection.online{color:#b9f7dc}
+button.primary{border:0;border-radius:9px;background:#128468;color:white;padding:11px 16px;font-weight:700}
+button.primary:hover:not(:disabled){background:#0c6b56}button.secondary{border:1px solid #bfd2cf;border-radius:8px;color:#174c41;background:#fff;padding:9px 13px}
+button.small{font-size:12px;padding:7px 10px}.topbar button.secondary{background:#ffffff20;color:white;border-color:#ffffff60}
+.pairing{display:flex;justify-content:center;align-items:center;gap:22px;padding:14px 20px;border-bottom:1px solid #e0e9e7;background:#f3faf8}
+.pairing p{font-size:13px;color:#53635f;margin:8px 0 0}.pairing img{width:150px;height:150px}
+.workspace{display:grid;grid-template-columns:minmax(230px,320px) minmax(0,1fr);flex:1;min-height:0}
+.sidebar{border-right:1px solid #dfe8e5;display:flex;flex-direction:column;min-height:0}
+.filters{padding:12px;background:#f7faf9;display:flex;gap:10px;flex-direction:column}
+input[type=search],input[type=text],input[type=password],textarea{border:1px solid #cbdad6;border-radius:9px;outline:none;padding:11px;background:white;max-width:100%}
+input:focus,textarea:focus{border-color:#129c7d;box-shadow:0 0 0 2px #a5ded133}
+input[type=search]{width:100%}.toggle-label{font-size:13px;display:flex;gap:7px;align-items:center;cursor:pointer;white-space:nowrap}
+input[type=checkbox]{accent-color:#128468;width:17px;height:17px}.chat-list{overflow:auto;flex:1}
+.chat-item{border:0;border-bottom:1px solid #edf2f0;padding:12px 13px;text-align:left;display:flex;align-items:center;gap:11px;width:100%;background:white;color:inherit}
+.chat-item:hover,.chat-item.selected{background:#e4f5ef}.avatar{background:#c9e6d8;color:#0b6852;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:50%;font-weight:700;flex-shrink:0}
+.chat-item-text{display:flex;flex-direction:column;min-width:0;gap:5px}.chat-item-text strong{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-item-text small{color:#61726d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.conversation{display:flex;min-width:0;background:#f4f5f1}.empty{margin:auto;color:#6b7875;text-align:center;max-width:400px;padding:20px}
+.active-chat{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
+.chat-header{padding:11px 18px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #dae3de;background:#fff;gap:8px}
+.chat-title{display:flex;flex-direction:column;min-width:0}.chat-title strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-title small{color:#89948f;font-size:10px;overflow:hidden;text-overflow:ellipsis}
+.langbar{background:#f8faf9;padding:8px 18px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e1e8e5}
+.langbar label{font-size:12px;white-space:nowrap;color:#56655f}.langbar input{flex:1;min-width:40px;padding:8px;font-size:13px}
+.messages{overflow-y:auto;flex:1;min-height:0;padding:18px;display:flex;flex-direction:column;align-items:stretch;gap:11px}
+.bubble{max-width:min(86%,590px);padding:12px 14px;border-radius:12px;box-shadow:0 1px 4px #0000000d}
+.bubble.in{align-self:flex-start;background:white}.bubble.out{align-self:flex-end;background:#d7f6e1}
+.bubble .text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.5}
+.bubble .original{margin-top:9px;padding-top:7px;border-top:1px dashed #b6cbc4;color:#687873;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg-meta{font-size:10px;color:#8d9794;text-align:right;margin-top:8px}
+.compose{background:white;border-top:1px solid #dce6e1;padding:12px 18px;display:flex;flex-direction:column;gap:8px}
+.compose label{font-size:12px;color:#5e6e68}.compose textarea{width:100%;resize:vertical;min-height:65px;max-height:190px}
+.compose-actions{display:flex;justify-content:space-between;gap:12px;align-items:center}.compose-actions small{color:#80918b;font-size:11px}
+.login-screen{height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-card{width:min(100%,420px);background:white;padding:32px;border-radius:16px;box-shadow:0 12px 45px #16372916;display:flex;flex-direction:column;gap:14px}
+.login-card h1{margin:0;font-size:24px}.login-card label{font-size:13px}.error{color:#a32828;min-height:20px;font-size:13px}.muted{color:#82918c;font-size:13px}.list-hint{padding:12px}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#273c37;color:white;padding:11px 18px;border-radius:10px;max-width:min(90vw,600px);box-shadow:0 4px 20px #0003;font-size:13px;z-index:3}
+.back{display:none}
+@media(max-width:700px){
+ .topbar{height:54px;padding:0 12px}.brand{font-size:15px}.top-actions{gap:6px}.connection{font-size:10px}
+ .workspace{display:block;position:relative}.sidebar,.conversation{position:absolute;inset:0}
+ .sidebar{z-index:1;background:white}.conversation{z-index:0}
+ .show-conversation .sidebar{display:none}.show-conversation .conversation{z-index:2}
+ .chat-header{padding:10px}.chat-title{flex-direction:row;align-items:center;gap:8px}
+ .chat-title small{display:none}.back{display:block}
+ .langbar{padding:7px;gap:6px}.langbar label{display:none}
+ .messages{padding:11px}.bubble{max-width:92%}.compose{padding:8px}.compose-actions small{max-width:120px}
+ .compose-actions .primary{font-size:12px;padding:10px}.pairing{flex-wrap:wrap;text-align:center}.pairing img{width:155px;height:155px}
+}

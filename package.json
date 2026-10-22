@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-translater",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private WhatsApp translation web client (one account, multiple chats)",
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check public/app.js && node --check lib/translate.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24",
+    "better-sqlite3": "^11.10.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "pino": "^9.9.0",
+    "qrcode": "^1.5.4"
+  }
+}

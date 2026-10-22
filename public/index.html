@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#117f64">
+  <meta name="description" content="Личный WhatsApp с автоматическим переводом">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/style.css">
+  <title>WhatsApp Translator</title>
+</head>
+<body>
+  <section id="login" class="login-screen" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand">🌐 WhatsApp Translator</div>
+      <h1>Войти в переводчик</h1>
+      <label for="login-password">Пароль администратора</label>
+      <input id="login-password" type="password" autocomplete="current-password" required autofocus>
+      <button type="submit" class="primary">Войти</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </section>
+  <div id="app" class="shell" hidden>
+    <header class="topbar">
+      <div class="brand">🌐 WhatsApp Translator</div>
+      <div class="top-actions">
+        <span id="connection" class="connection">Подключение…</span>
+        <button id="logout" class="secondary small">Выйти</button>
+      </div>
+    </header>
+    <div id="pairing" class="pairing" hidden>
+      <div>
+        <strong id="pairing-title">Подключение WhatsApp</strong>
+        <p id="pairing-details">WhatsApp → Связанные устройства → Привязка устройства</p>
+      </div>
+      <img id="qr" alt="QR-код для привязки WhatsApp" hidden>
+      <button id="reconnect" class="secondary" hidden>Подключить заново</button>
+    </div>
+    <main class="workspace">
+      <aside class="sidebar">
+        <div class="filters">
+          <input id="search" type="search" placeholder="Поиск контактов…" aria-label="Поиск контактов">
+          <label class="toggle-label"><input id="only-enabled" type="checkbox"> Только с переводом</label>
+        </div>
+        <div id="chat-list" class="chat-list" role="list"></div>
+      </aside>
+      <section class="conversation">
+        <div id="empty" class="empty">Выберите переписку слева. Сначала подключите WhatsApp по QR-коду.</div>
+        <div id="active-chat" class="active-chat" hidden>
+          <div class="chat-header">
+            <div class="chat-title">
+              <button id="mobile-back" class="secondary back" aria-label="К списку чатов">←</button>
+              <strong id="chat-name"></strong>
+              <small id="chat-jid"></small>
+            </div>
+            <label class="toggle-label"><input id="enable-chat" type="checkbox"> Перевод</label>
+          </div>
+          <div class="langbar">
+            <label for="target-language">Язык собеседника</label>
+            <input id="target-language" type="text" maxlength="100" placeholder="Montenegrin (Latin script, Ijekavian)">
+            <button id="save-language" class="secondary small">Сохранить</button>
+          </div>
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <form id="compose" class="compose">
+            <label for="draft">Пишешь по-русски → отправится на языке собеседника</label>
+            <textarea id="draft" maxlength="4000" rows="2" placeholder="Введите сообщение на русском…"></textarea>
+            <div class="compose-actions">
+              <small id="compose-state">Перевод выключен</small>
+              <button id="send" class="primary" type="submit">Перевести и отправить ➤</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </main>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

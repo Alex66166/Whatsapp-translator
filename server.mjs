@@ -1,0 +1,373 @@
+import 'dotenv/config';
+import express from 'express';
+import Database from 'better-sqlite3';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import pino from 'pino';
+import QRCode from 'qrcode';
+import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { translate } from './lib/translate.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
+const DEFAULT_LANGUAGE = process.env.DEFAULT_TARGET_LANGUAGE || 'Montenegrin (Latin script, Ijekavian)';
+mkdirSync(DATA, { recursive: true, mode: 0o700 });
+const db = new Database(path.join(DATA, 'messages.sqlite'));
+db.pragma('journal_mode = WAL');
+db.pragma('busy_timeout = 5000');
+db.exec([
+  'CREATE TABLE IF NOT EXISTS chats (jid TEXT PRIMARY KEY, title TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, target_language TEXT NOT NULL, last_activity INTEGER NOT NULL DEFAULT 0)',
+  'CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, jid TEXT NOT NULL, direction TEXT NOT NULL, original TEXT NOT NULL, translated TEXT, state TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY(jid) REFERENCES chats(jid))',
+  'CREATE INDEX IF NOT EXISTS messages_jid_time ON messages(jid, created_at DESC)'
+].join(';') + ';');
+
+const stmt = {
+  chat: db.prepare('SELECT * FROM chats WHERE jid = ?'),
+  chats: db.prepare('SELECT * FROM chats ORDER BY last_activity DESC, title COLLATE NOCASE LIMIT 5000'),
+  addChat: db.prepare('INSERT INTO chats(jid,title,target_language,last_activity) VALUES(?,?,?,?) ON CONFLICT(jid) DO UPDATE SET last_activity=MAX(chats.last_activity,excluded.last_activity)'),
+  title: db.prepare('UPDATE chats SET title=? WHERE jid=?'),
+  setting: db.prepare('UPDATE chats SET enabled=?, target_language=? WHERE jid=?'),
+  messages: db.prepare('SELECT * FROM (SELECT * FROM messages WHERE jid=? ORDER BY created_at DESC LIMIT 150) ORDER BY created_at ASC'),
+  addMsg: db.prepare('INSERT OR IGNORE INTO messages(id,jid,direction,original,translated,state,created_at) VALUES(?,?,?,?,?,?,?)'),
+  updateMsg: db.prepare('UPDATE messages SET translated=?,state=? WHERE id=?'),
+  stateMsg: db.prepare('UPDATE messages SET state=? WHERE id=?'),
+  msg: db.prepare('SELECT * FROM messages WHERE id=?')
+};
+let wa = null;
+let connection = 'starting';
+let qrImage = null;
+let generation = 0;
+let reconnectTimer = null;
+const people = new Map();
+const clients = new Set();
+const work = [];
+let running = false;
+const log = pino({ level: process.env.LOG_LEVEL || 'warn' });
+
+function emit() {
+  for (const response of clients) {
+    try { response.write('data: changed\n\n'); } catch { clients.delete(response); }
+  }
+}
+function validChat(jid) {
+  return typeof jid === 'string' && jid.length <= 160 &&
+    (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid'));
+}
+function shortJid(jid) { return jid.split('@')[0] || jid; }
+function touch(jid, name, timestamp = Date.now()) {
+  if (!validChat(jid)) return;
+  const title = name || people.get(jid) || shortJid(jid);
+  const existing = stmt.chat.get(jid);
+  stmt.addChat.run(jid, title, DEFAULT_LANGUAGE, timestamp);
+  if (name && (!existing || existing.title === shortJid(jid) || people.has(jid))) {
+    stmt.title.run(name, jid);
+  }
+}
+function updateContact(contact) {
+  const jid = contact?.id;
+  if (!validChat(jid)) return;
+  const name = contact.name || contact.notify || contact.verifiedName;
+  if (name) {
+    people.set(jid, name);
+    if (stmt.chat.get(jid)) stmt.title.run(name, jid);
+  }
+}
+function textOf(message) {
+  let m = message?.message;
+  for (let i = 0; i < 4 && m; i++) {
+    if (m.ephemeralMessage) { m = m.ephemeralMessage.message; continue; }
+    if (m.viewOnceMessage) { m = m.viewOnceMessage.message; continue; }
+    if (m.viewOnceMessageV2) { m = m.viewOnceMessageV2.message; continue; }
+    if (m.documentWithCaptionMessage) { m = m.documentWithCaptionMessage.message; continue; }
+    break;
+  }
+  return m?.conversation || m?.extendedTextMessage?.text ||
+    m?.imageMessage?.caption || m?.videoMessage?.caption || '';
+}
+async function runQueue() {
+  if (running) return;
+  running = true;
+  try {
+    while (work.length) {
+      const job = work.shift();
+      try {
+        const translated = await translate(job.text, job.source, job.target);
+        stmt.updateMsg.run(translated, 'ready', job.id);
+      } catch (error) {
+        log.warn({ error: error.message }, 'Translation failed');
+        stmt.updateMsg.run(null, 'error', job.id);
+      }
+      emit();
+    }
+  } finally { running = false; }
+}
+function queueIncoming(id, text, target) {
+  if (work.length >= 200) { stmt.stateMsg.run('error', id); return; }
+  work.push({ id, text, source: target, target: 'Russian' });
+  void runQueue();
+}
+function ingest(message) {
+  const jid = message?.key?.remoteJid;
+  if (!validChat(jid) || !message?.key?.id || message?.key?.participant) return;
+  const text = textOf(message);
+  if (typeof text !== 'string' || !text.trim()) return;
+  const timestamp = Number(message.messageTimestamp?.low ?? message.messageTimestamp ?? 0);
+  const timeMs = Number.isFinite(timestamp) && timestamp > 0 ? timestamp * 1000 : Date.now();
+  const pushName = message.pushName || '';
+  if (pushName && !message.key.fromMe) people.set(jid, pushName);
+  touch(jid, pushName && !message.key.fromMe ? pushName : '', timeMs);
+  const chat = stmt.chat.get(jid);
+  if (!chat?.enabled) { emit(); return; }
+  const id = jid + '|' + message.key.id;
+  const self = !!message.key.fromMe;
+  const result = stmt.addMsg.run(id, jid, self ? 'out' : 'in', text,
+    self ? text : null, self ? 'sent-original' : 'translating', timeMs);
+  if (!result.changes) return;
+  emit();
+  if (!self) queueIncoming(id, text, chat.target_language);
+}
+function scheduleReconnect() {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; void connectWhatsApp(); }, 7000);
+}
+async function connectWhatsApp() {
+  if (wa) return;
+  const myGeneration = ++generation;
+  connection = 'connecting';
+  qrImage = null;
+  emit();
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(path.join(DATA, 'auth'));
+    const { version } = await fetchLatestBaileysVersion();
+    if (myGeneration !== generation) return;
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      logger: log,
+      printQRInTerminal: false,
+      syncFullHistory: false,
+      markOnlineOnConnect: false
+    });
+    wa = sock;
+    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('contacts.upsert', items => { for (const item of items) updateContact(item); emit(); });
+    sock.ev.on('contacts.update', items => { for (const item of items) updateContact(item); emit(); });
+    sock.ev.on('chats.upsert', items => {
+      for (const item of items) touch(item.id, item.name || '', Date.now());
+      emit();
+    });
+    sock.ev.on('chats.update', items => {
+      for (const item of items) touch(item.id, item.name || '', Date.now());
+      emit();
+    });
+    sock.ev.on('messaging-history.set', data => {
+      for (const person of data.contacts || []) updateContact(person);
+      for (const chat of data.chats || []) touch(chat.id, chat.name || '', Date.now());
+      // Do not translate history en masse or load media into RAM / disk.
+      emit();
+    });
+    sock.ev.on('messages.upsert', data => {
+      if (data.type !== 'notify') return;
+      for (const m of data.messages || []) {
+        try { ingest(m); } catch (error) { log.error({ error: error.message }, 'message ingest failed'); }
+      }
+    });
+    sock.ev.on('connection.update', async update => {
+      if (myGeneration !== generation) return;
+      if (update.qr) {
+        try { qrImage = await QRCode.toDataURL(update.qr, { margin: 1, width: 320 }); }
+        catch { qrImage = null; }
+        connection = 'scan_qr';
+        emit();
+      }
+      if (update.connection === 'open') {
+        connection = 'connected';
+        qrImage = null;
+        emit();
+      }
+      if (update.connection === 'close') {
+        const code = update.lastDisconnect?.error?.output?.statusCode;
+        wa = null;
+        qrImage = null;
+        connection = code === DisconnectReason.loggedOut ? 'logged_out' : 'disconnected';
+        emit();
+        if (code !== DisconnectReason.loggedOut) scheduleReconnect();
+      }
+    });
+  } catch (error) {
+    wa = null;
+    connection = 'error';
+    log.error({ error: error.message }, 'WhatsApp connection failed');
+    scheduleReconnect();
+  }
+}
+
+const app = express();
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+  next();
+});
+app.use(express.json({ limit: '24kb' }));
+function cookieValue(req) {
+  return (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith('wt_session='))?.slice(11) || '';
+}
+const secret = process.env.SESSION_SECRET || randomBytes(32).toString('hex');
+function sign(payload) { return createHmac('sha256', secret).update(payload).digest('hex'); }
+function validSession(req) {
+  const token = cookieValue(req);
+  const [payload, mac] = token.split('.');
+  if (!payload || !mac || mac.length !== 64) return false;
+  const expected = sign(payload);
+  if (!timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return false;
+  const expires = Number(Buffer.from(payload, 'base64url').toString('utf8'));
+  return Number.isFinite(expires) && expires > Date.now();
+}
+function secureCookie() {
+  return '; HttpOnly; SameSite=Strict; Path=/' + (process.env.COOKIE_SECURE === '0' ? '' : '; Secure');
+}
+function requireAuth(req, res, next) {
+  if (!validSession(req)) return res.status(401).json({ error: 'Sign in required' });
+  next();
+}
+app.use('/api', (req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    const origin = req.get('origin');
+    const host = req.get('host');
+    const expectedScheme = process.env.COOKIE_SECURE === '0' ? 'http' : 'https';
+    if (origin && origin !== expectedScheme + '://' + host) return res.status(403).json({ error: 'Bad origin' });
+    if (req.get('sec-fetch-site') === 'cross-site') return res.status(403).json({ error: 'Cross-site request blocked' });
+  }
+  next();
+});
+function checkHash(password) {
+  const [salt, stored] = (process.env.ADMIN_PASSWORD_HASH || '').split(':');
+  if (!salt || !stored || !/^[a-f0-9]{32}$/.test(salt) || !/^[a-f0-9]{128}$/.test(stored)) return false;
+  const actual = scryptSync(password, Buffer.from(salt, 'hex'), 64);
+  return timingSafeEqual(actual, Buffer.from(stored, 'hex'));
+}
+const attempts = new Map();
+app.post('/api/login', (req, res) => {
+  const ip = req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let attempt = attempts.get(ip);
+  if (!attempt || now - attempt.start > 15 * 60000) attempt = { start: now, count: 0 };
+  attempt.count++;
+  attempts.set(ip, attempt);
+  if (attempt.count > 10) return res.status(429).json({ error: 'Too many attempts; retry later' });
+  const password = req.body?.password;
+  if (typeof password !== 'string' || password.length > 256 || !checkHash(password)) {
+    return res.status(401).json({ error: 'Incorrect password' });
+  }
+  attempts.delete(ip);
+  const payload = Buffer.from(String(now + 7 * 86400000)).toString('base64url');
+  res.setHeader('Set-Cookie', 'wt_session=' + payload + '.' + sign(payload) + secureCookie());
+  res.json({ ok: true });
+});
+app.post('/api/logout', requireAuth, (req, res) => {
+  res.setHeader('Set-Cookie', 'wt_session=; Max-Age=0' + secureCookie());
+  res.json({ ok: true });
+});
+app.get('/api/status', requireAuth, (req, res) => {
+  res.json({ connection, qr: qrImage, groqConfigured: !!process.env.GROQ_API_KEY });
+});
+app.post('/api/connect', requireAuth, (req, res) => {
+  if (connection === 'logged_out' || connection === 'error' || connection === 'disconnected') {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    void connectWhatsApp();
+  }
+  res.json({ ok: true });
+});
+app.get('/api/chats', requireAuth, (req, res) => {
+  res.json(stmt.chats.all().map(c => ({
+    jid: c.jid, title: c.title, enabled: !!c.enabled,
+    targetLanguage: c.target_language, lastActivity: c.last_activity
+  })));
+});
+app.get('/api/chats/:jid/messages', requireAuth, (req, res) => {
+  const jid = req.params.jid;
+  if (!validChat(jid) || !stmt.chat.get(jid)) return res.status(404).json({ error: 'Chat not found' });
+  res.json(stmt.messages.all(jid));
+});
+app.patch('/api/chats/:jid', requireAuth, (req, res) => {
+  const jid = req.params.jid;
+  const old = stmt.chat.get(jid);
+  if (!validChat(jid) || !old) return res.status(404).json({ error: 'Chat not found' });
+  const enabled = typeof req.body?.enabled === 'boolean' ? req.body.enabled : !!old.enabled;
+  const target = req.body?.targetLanguage ?? old.target_language;
+  if (typeof target !== 'string' || target.trim().length < 2 || target.length > 100)
+    return res.status(400).json({ error: 'Language must be 2–100 characters' });
+  stmt.setting.run(enabled ? 1 : 0, target.trim(), jid);
+  emit();
+  res.json({ ok: true });
+});
+app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
+  const jid = req.params.jid;
+  const chat = stmt.chat.get(jid);
+  const original = req.body?.text;
+  if (!validChat(jid) || !chat) return res.status(404).json({ error: 'Chat not found' });
+  if (!chat.enabled) return res.status(409).json({ error: 'Enable translation for this chat first' });
+  if (typeof original !== 'string' || !original.trim() || original.length > 4000)
+    return res.status(400).json({ error: 'Message must contain 1–4000 characters' });
+  if (connection !== 'connected' || !wa) return res.status(503).json({ error: 'WhatsApp is disconnected' });
+  const requestId = req.body?.requestId;
+  if (typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/i.test(requestId))
+    return res.status(400).json({ error: 'requestId required' });
+  const id = 'local:' + requestId;
+  const existing = stmt.msg.get(id);
+  if (existing) return res.status(409).json({ error: 'This request was already processed; check the chat before retrying' });
+  stmt.addMsg.run(id, jid, 'out', original, null, 'translating', Date.now());
+  emit();
+  try {
+    const translated = await translate(original, 'Russian', chat.target_language);
+    stmt.updateMsg.run(translated, 'sending', id);
+    emit();
+    const sent = await wa.sendMessage(jid, { text: translated });
+    if (!sent?.key?.id) throw new Error('WhatsApp did not confirm message submission');
+    stmt.stateMsg.run('sent', id);
+    emit();
+    return res.json({ ok: true, translated });
+  } catch (error) {
+    log.warn({ error: error.message }, 'Outgoing message failed');
+    stmt.stateMsg.run('error', id);
+    emit();
+    return res.status(502).json({ error: 'Not sent or status uncertain: ' + error.message + '. Check the chat before trying again.' });
+  }
+});
+app.post('/api/messages/retry', requireAuth, (req, res) => {
+  const row = stmt.msg.get(req.body?.id);
+  if (!row || row.direction !== 'in' || row.state !== 'error') return res.status(404).json({ error: 'No failed incoming translation found' });
+  const chat = stmt.chat.get(row.jid);
+  if (!chat?.enabled) return res.status(409).json({ error: 'Chat translation disabled' });
+  stmt.stateMsg.run('translating', row.id);
+  queueIncoming(row.id, row.original, chat.target_language);
+  emit();
+  res.json({ ok: true });
+});
+app.get('/api/events', requireAuth, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+  res.write('data: connected\n\n');
+  clients.add(res);
+  const heartbeat = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 20000);
+  req.on('close', () => { clearInterval(heartbeat); clients.delete(res); });
+});
+app.get('/health', (_req, res) => res.json({ ok: true }));
+app.use(express.static(path.join(HERE, 'public'), { index: 'index.html', maxAge: 0 }));
+app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
+const PORT = Number(process.env.PORT || 3080);
+const HOST = process.env.HOST || '127.0.0.1';
+app.listen(PORT, HOST, () => {
+  console.log('WhatsApp Translator listening on ' + HOST + ':' + PORT);
+  void connectWhatsApp();
+});
+process.on('SIGTERM', () => { db.close(); process.exit(0); });
