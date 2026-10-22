@@ -56,7 +56,12 @@ if id "$APPUSER" >/dev/null 2>&1 && [[ "$(id -u "$APPUSER")" -eq 0 ]]; then
   echo "Приложение нельзя запускать от root"; exit 1
 fi
 EXISTING=0
-[[ -f "$APP_DIR/.env" ]] && EXISTING=1
+if [[ -f "$APP_DIR/.env" ]]; then
+  EXISTING=1
+elif [[ -e "$APP_DIR" ]]; then
+  echo "Каталог приложения уже существует без конфигурации .env; автоматическое обновление запрещено."
+  exit 1
+fi
 if ss -H -ltn "( sport = :$PORT )" | grep -q .; then
   OLD_PORT=""
   if [[ "$EXISTING" -eq 1 ]]; then
@@ -134,6 +139,84 @@ read -rp "Для применения наберите INSTALL: " YES
 if [[ "$EXISTING" -eq 1 ]]; then
   bash "$SRC/backup.sh" "$APP_DIR" "$BACKUP_DIR" "$SERVICE"
 fi
+
+# Transactional application/vhost rollback after confirmation.
+# Does not roll back already-installed system packages; report this honestly.
+FREE_MB="$(df -Pm "$(dirname "$APP_DIR")" | awk 'END {print $4}')"
+if [[ -z "$FREE_MB" || "$FREE_MB" -lt 2048 ]]; then
+  echo "Свободное место менее 2 ГБ. Установка остановлена без изменения приложения."
+  exit 1
+fi
+TXN="$(mktemp -d /root/whatsapp-translator-rollback.XXXXXXXX)"
+TXN_COMMITTED=0
+HAD_UNIT=0
+WAS_ACTIVE=0
+HAD_NGINX_SITE=0
+HAD_NGINX_LINK=0
+[[ -f "/etc/systemd/system/$SERVICE.service" ]] && HAD_UNIT=1
+if [[ "$HAD_UNIT" -eq 1 ]]; then
+  cp -a "/etc/systemd/system/$SERVICE.service" "$TXN/service.unit"
+  if systemctl is-active --quiet "$SERVICE.service"; then WAS_ACTIVE=1; fi
+fi
+if [[ "$EXISTING" -eq 1 ]]; then
+  mkdir "$TXN/app"
+  echo "Резервируем предыдущую версию приложения для автоматического отката..."
+  rsync -a --exclude='.data/' "$APP_DIR/" "$TXN/app/"
+fi
+if [[ "$PROXY_MODE" == nginx ]]; then
+  if [[ -e "$NGINX_SITE" ]]; then
+    HAD_NGINX_SITE=1
+    cp -a "$NGINX_SITE" "$TXN/nginx-site.conf"
+  fi
+  if [[ -L "/etc/nginx/sites-enabled/$SERVICE.conf" ]]; then
+    HAD_NGINX_LINK=1
+    cp -a --no-dereference "/etc/nginx/sites-enabled/$SERVICE.conf" "$TXN/nginx-link.conf"
+  fi
+fi
+rollback_install() {
+  local status=$?
+  trap - EXIT
+  if [[ "$TXN_COMMITTED" -ne 1 ]]; then
+    echo "Установка прервана — восстанавливаем предыдущую версию приложения и конфигурацию." >&2
+    systemctl stop "$SERVICE.service" >/dev/null 2>&1 || :
+    if [[ "$EXISTING" -eq 1 ]]; then
+      mkdir -p "$APP_DIR"
+      rsync -a --delete --exclude='.data/' "$TXN/app/" "$APP_DIR/" || :
+    else
+      # Deletion limited to the validated new installation directory.
+      rm -rf -- "$APP_DIR" || :
+    fi
+    if [[ "$HAD_UNIT" -eq 1 ]]; then
+      cp -a "$TXN/service.unit" "/etc/systemd/system/$SERVICE.service" || :
+    else
+      rm -f "/etc/systemd/system/$SERVICE.service" || :
+    fi
+    systemctl daemon-reload || :
+    if [[ "$HAD_UNIT" -eq 1 && "$WAS_ACTIVE" -eq 1 ]]; then
+      systemctl start "$SERVICE.service" || :
+    fi
+    if [[ "$PROXY_MODE" == nginx ]]; then
+      if [[ "$HAD_NGINX_SITE" -eq 1 ]]; then
+        cp -a "$TXN/nginx-site.conf" "$NGINX_SITE" || :
+      else
+        rm -f "$NGINX_SITE" || :
+      fi
+      if [[ "$HAD_NGINX_LINK" -eq 1 ]]; then
+        cp -a --no-dereference "$TXN/nginx-link.conf" "/etc/nginx/sites-enabled/$SERVICE.conf" || :
+      else
+        rm -f "/etc/nginx/sites-enabled/$SERVICE.conf" || :
+      fi
+      if command -v nginx >/dev/null 2>&1; then nginx -t && systemctl reload nginx || :; fi
+    fi
+    echo "Данные WhatsApp и .data не удалялись при обновлении. Системные пакеты остаются обновлёнными." >&2
+  fi
+  rm -rf -- "$TXN" || :
+  exit "$status"
+}
+trap rollback_install EXIT
+if [[ "$EXISTING" -eq 1 ]]; then
+  systemctl stop "$SERVICE.service" || :
+fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl gnupg build-essential python3 rsync openssl
@@ -203,6 +286,18 @@ UNIT
 systemctl daemon-reload
 systemctl enable "$SERVICE.service"
 systemctl restart "$SERVICE.service"
+# Refuse to mark install successful if the app did not start or its local API is broken.
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if systemctl is-active --quiet "$SERVICE.service" &&
+     curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null; then
+    break
+  fi
+  if [[ "$attempt" -eq 10 ]]; then
+    echo "WhatsApp Translator service failed health checks"
+    exit 1
+  fi
+  sleep 2
+done
 
 install -d -m 750 "$APP_DIR/deploy-examples"
 cat > "$APP_DIR/deploy-examples/nginx-example.conf" <<CONF
@@ -282,3 +377,4 @@ else
 fi
 echo "Служба: systemctl status $SERVICE"
 echo "Журнал: journalctl -u $SERVICE -n 100 --no-pager"
+TXN_COMMITTED=1
