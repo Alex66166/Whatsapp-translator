@@ -6,8 +6,17 @@ cd "$(dirname "$(readlink -f "$0")")"
 SRC="$(pwd)"
 [[ -f "$SRC/server.mjs" && -f "$SRC/package.json" ]] || { echo "Запускать из корня проекта"; exit 1; }
 
+ask() {
+  local variable="$1" label="$2" suggested="$3" entered=""
+  if [[ -n "$suggested" ]]; then
+    read -rp "$label [$suggested]: " entered || exit 1
+  else
+    read -rp "$label: " entered || exit 1
+  fi
+  printf -v "$variable" "%s" "${entered:-$suggested}"
+}
 echo "==== ЭТАП 2. Настройка по результатам аудита ===="
-read -rp "Абсолютный путь к изученному файлу audit-report.txt: " AUDIT
+ask AUDIT "Путь к отчёту аудита" "${WA_AUDIT_REPORT:-}"
 [[ "$AUDIT" = /* && -f "$AUDIT" ]] || { echo "Аудит не найден. Сначала sudo bash audit.sh | tee audit-report.txt"; exit 1; }
 grep -Fq 'АУДИТ ЗАВЕРШЁН:' "$AUDIT" || { echo "Это не законченный отчёт audit.sh"; exit 1; }
 AGE="$(find "$AUDIT" -mmin +2880 -print)"
@@ -16,13 +25,13 @@ echo "Убедитесь, что вы проанализировали веб-с
 read -rp "Наберите AUDIT-APPROVED после согласования конфигурации: " AGREEMENT
 [[ "$AGREEMENT" == "AUDIT-APPROVED" ]] || { echo "Установка отменена"; exit 1; }
 
-read -rp "Абсолютный каталог приложения (например, /opt/whatsapp-translator): " APP_DIR
-read -rp "Имя systemd-службы (например, whatsapp-translator): " SERVICE
-read -rp "Непривилегированный системный пользователь приложения (например, wttranslator): " APPUSER
-read -rp "Свободный TCP-порт приложения на 127.0.0.1 (например, 3080): " PORT
-read -rp "Домен для HTTPS-доступа (например, chat.example.com): " DOMAIN
+ask APP_DIR "Каталог приложения" "${WA_REC_APP_DIR:-/opt/whatsapp-translator}"
+ask SERVICE "Служба systemd" "${WA_REC_SERVICE:-whatsapp-translator}"
+ask APPUSER "Системный пользователь" "${WA_REC_APPUSER:-wttranslator}"
+ask PORT "Локальный порт" "${WA_REC_PORT:-3080}"
+ask DOMAIN "Домен HTTPS" "${WA_REC_DOMAIN:-}"
 echo "Реверс-прокси: [manual] ничего не меняем, создаём шаблон; [nginx] добавляем отдельный Nginx vhost после проверок."
-read -rp "Режим [manual/nginx]: " PROXY_MODE
+ask PROXY_MODE "Режим reverse-proxy (manual/nginx)" "${WA_REC_PROXY_MODE:-manual}"
 [[ "$APP_DIR" = /* && "$APP_DIR" =~ ^/[a-zA-Z0-9_./-]+$ && "$APP_DIR" != "/" && "$APP_DIR" != "/opt" && "$APP_DIR" != "/srv" ]] || { echo "Небезопасный путь приложения"; exit 1; }
 [[ "$SERVICE" =~ ^[a-zA-Z0-9_-]+$ && "$APPUSER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "Недопустимые имена пользователя или службы"; exit 1; }
 [[ "$PORT" =~ ^[0-9]+$ ]] || { echo "Порт должен быть числом"; exit 1; }
@@ -80,13 +89,13 @@ if [[ "$PROXY_MODE" == "nginx" ]]; then
      [[ ! -f "$NGINX_SITE" ]]; then
     echo "Домен уже настроен в Nginx. Воспользуйтесь manual."; exit 1
   fi
-  read -rp "Email для Let's Encrypt: " EMAIL
+  ask EMAIL "Email Let's Encrypt" "${WA_REC_EMAIL:-}"
   [[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || { echo "Некорректный email"; exit 1; }
-  read -rp "Каталог HTTP-01 ACME challenge (например, /var/www/letsencrypt): " ACME_DIR
+  ask ACME_DIR "Каталог ACME" "${WA_REC_ACME_DIR:-/var/www/letsencrypt}"
   [[ "$ACME_DIR" = /* && "$ACME_DIR" =~ ^/[a-zA-Z0-9_./-]+$ ]] || { echo "Некорректный каталог"; exit 1; }
 fi
 if [[ "$EXISTING" -eq 1 ]]; then
-  read -rp "Абсолютный каталог для ЗАШИФРОВАННОЙ копии перед переустановкой (например, /root/wt-backups): " BACKUP_DIR
+  ask BACKUP_DIR "Каталог резервных копий" "${WA_REC_BACKUP_DIR:-/root/whatsapp-translator-backups}"
   [[ "$BACKUP_DIR" = /* ]] || { echo "Каталог должен быть абсолютным"; exit 1; }
   echo "Старые .env, WhatsApp-сессия, БД и медиа будут сохранены."
 else
@@ -94,11 +103,11 @@ else
   [[ "$(printf '%s' "$PASSWORD" | wc -c)" -ge 12 ]] || { echo "Слишком короткий пароль"; exit 1; }
   read -rsp "Ключ Groq (gsk_...): " GROQ; echo
   [[ "$GROQ" =~ ^gsk_[-_a-zA-Z0-9]+$ ]] || { echo "Некорректный формат ключа Groq"; exit 1; }
-  read -rp "Модель Groq (например, openai/gpt-oss-120b): " GROQ_MODEL
-  read -rp "Язык собеседников по умолчанию (например, Montenegrin (Latin script, Ijekavian)): " TARGET_LANG
+  ask GROQ_MODEL "Модель Groq" "${WA_REC_MODEL:-openai/gpt-oss-120b}"
+  ask TARGET_LANG "Язык собеседников по умолчанию" "${WA_REC_LANGUAGE:-Montenegrin (Latin script, Ijekavian)}"
   [[ "$GROQ_MODEL" =~ ^[a-zA-Z0-9_./-]+$ && "$TARGET_LANG" =~ ^[a-zA-Z0-9.,\ \(\)-]+$ ]] || { echo "Некорректные настройки языка или модели"; exit 1; }
-  read -rp "Максимальный размер изображения, МБ (например, 8): " MAX_IMAGE
-  read -rp "Общий лимит изображений на диске, МБ (например, 512): " MAX_MEDIA
+  ask MAX_IMAGE "Лимит одного фото, МБ" "${WA_REC_MAX_IMAGE:-8}"
+  ask MAX_MEDIA "Общая квота фото, МБ" "${WA_REC_MEDIA_TOTAL:-512}"
   [[ "$MAX_IMAGE" =~ ^[0-9]+$ && "$MAX_MEDIA" =~ ^[0-9]+$ ]] || { echo "Лимиты должны быть целыми числами"; exit 1; }
   (( MAX_IMAGE >= 1 && MAX_IMAGE <= 32 && MAX_MEDIA >= MAX_IMAGE && MAX_MEDIA <= 10000 )) || { echo "Лимиты должны быть в диапазоне 1–32 МБ и от размера файла до 10000 МБ"; exit 1; }
 fi
