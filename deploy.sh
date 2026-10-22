@@ -378,3 +378,9 @@ fi
 echo "Служба: systemctl status $SERVICE"
 echo "Журнал: journalctl -u $SERVICE -n 100 --no-pager"
 TXN_COMMITTED=1
+echo
+echo "=== Финальная диагностика ==="
+if ! runuser -u "$APPUSER" -- env HOME="$APP_DIR" sh -c 'cd "$1" && npm run doctor' sh "$APP_DIR"; then
+  echo "ВНИМАНИЕ: диагностика Groq/API или ресурсов выявила проблему."
+  echo "Служба установлена, но перевод может быть недоступен. Исправьте проблему и повторите npm run doctor."
+fi
