@@ -5,7 +5,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaile
 import pino from 'pino';
 import QRCode from 'qrcode';
 import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID, createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync, existsSync, statSync, createReadStream } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { translate } from './lib/translate.mjs';
@@ -87,6 +87,8 @@ function updateContact(contact) {
   }
 }
 function bodyOf(message) {
+  // Не сохраняем медиа одноразового просмотра (view-once).
+  if (message?.message?.viewOnceMessage || message?.message?.viewOnceMessageV2) return null;
   let m = message?.message;
   for (let i = 0; i < 4 && m; i++) {
     if (m.ephemeralMessage) { m = m.ephemeralMessage.message; continue; }
