@@ -14,3 +14,4 @@ jobs:
       - run: for script in bootstrap.sh install.sh audit.sh deploy.sh integrate-existing.sh backup.sh restore.sh; do bash -n "$script" || exit 1; done
       - run: npm run check
       - run: npm test
+      - run: sudo bash test/backup-smoke.sh
