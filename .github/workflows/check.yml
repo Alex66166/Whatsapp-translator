@@ -11,5 +11,6 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
+      - run: bash -n install.sh
       - run: npm run check
       - run: npm test
