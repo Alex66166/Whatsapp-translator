@@ -18,10 +18,10 @@ curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --connect-timeout 15 --max-time 
   -o "$WORK/project.tar.gz" || { echo "Ошибка: сделайте репозиторий публичным, проверьте сеть."; exit 1; }
 tar -tzf "$WORK/project.tar.gz" >/dev/null || { echo "Неверный архив"; exit 1; }
 tar -xzf "$WORK/project.tar.gz" --strip-components=1 -C "$WORK/project"
-for file in audit.sh deploy.sh backup.sh server.mjs package.json; do
+for file in audit.sh deploy.sh integrate-existing.sh backup.sh server.mjs package.json; do
   [[ -f "$WORK/project/$file" ]] || { echo "В архиве нет $file"; exit 1; }
 done
-for script in audit.sh deploy.sh backup.sh restore.sh; do
+for script in audit.sh deploy.sh integrate-existing.sh backup.sh restore.sh; do
   bash -n "$WORK/project/$script" || { echo "Ошибка синтаксиса $script"; exit 1; }
 done
 
