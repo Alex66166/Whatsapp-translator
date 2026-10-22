@@ -21,7 +21,7 @@ if grep -aF 'sensitive-session-token' "$ARCHIVE" >/dev/null; then
   echo "Secret was visible in encrypted backup" >&2; exit 1
 fi
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 250000 -pass "pass:$PASSWORD" -in "$ARCHIVE" |
-  tar -tzf - | grep -qF '.data/auth/creds.json' || {
+  tar -tzf - | grep -F '.data/auth/creds.json' >/dev/null || {
     echo "Backup archive does not contain WhatsApp session"; exit 1;
   }
 
