@@ -38,6 +38,7 @@ if (!columns.has('wa_id')) db.exec('ALTER TABLE messages ADD COLUMN wa_id TEXT')
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS message_wa_id_unique ON messages(jid,wa_id) WHERE wa_id IS NOT NULL');
 // Never resend outgoing on boot: previous WhatsApp delivery might have succeeded.
 db.prepare("UPDATE messages SET state='uncertain' WHERE direction='out' AND state IN ('translating','sending')").run();
+db.prepare("UPDATE messages SET media_state='error' WHERE media_state='loading'").run();
 
 
 const stmt = {
@@ -402,8 +403,33 @@ app.post('/api/logout', requireAuth, (req, res) => {
 app.get('/api/status', requireAuth, (req, res) => {
   res.json({ connection, qr: qrImage, groqConfigured: !!process.env.GROQ_API_KEY });
 });
+app.post('/api/relink', requireAuth, (req, res) => {
+  if (connection !== 'logged_out') return res.status(409).json({ error: 'Re-linking is only available after WhatsApp logged out' });
+  if (req.body?.confirm !== 'RELINK' || !checkHash(req.body?.password || ''))
+    return res.status(403).json({ error: 'Password and RELINK confirmation required' });
+  try {
+    const authPath = path.join(DATA, 'auth');
+    if (existsSync(authPath)) {
+      const suffix = new Date().toISOString().replace(/[:.]/g, '-');
+      const retiredPath = path.join(DATA, 'auth-retired-' + suffix);
+      renameSync(authPath, retiredPath);
+      log.warn('Former WhatsApp credentials retained in restricted session-backup folder');
+    }
+    ++generation;
+    wa = null;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    connection = 'disconnected';
+    emit();
+    void connectWhatsApp();
+    return res.json({ ok: true });
+  } catch (error) {
+    log.error({ error: error.message }, 'Re-link failed');
+    return res.status(500).json({ error: 'Unable to reset session, original credentials retained' });
+  }
+});
 app.post('/api/connect', requireAuth, (req, res) => {
-  if (connection === 'logged_out' || connection === 'error' || connection === 'disconnected') {
+  if (connection === 'error' || connection === 'disconnected') {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
     void connectWhatsApp();
