@@ -193,6 +193,10 @@ CONF
     systemctl is-active --quiet caddy || { echo "Caddy не работает"; exit 1; }
     command -v caddy >/dev/null || exit 1
     FILE="/etc/caddy/Caddyfile"
+    # Не меняем Caddyfile, если systemd запускает Caddy с альтернативным конфигом.
+    if ! systemctl show -p ExecStart --value caddy | grep -F '/etc/caddy/Caddyfile' >/dev/null; then
+      echo "Не удалось подтвердить, что Caddy использует /etc/caddy/Caddyfile: ручной режим."; exit 1
+    fi
     [[ -f "$FILE" && ! -L "$FILE" ]] || { echo "Caddyfile отсутствует или является ссылкой"; exit 1; }
     caddy validate --config "$FILE" --adapter caddyfile || exit 1
     if grep -F "$DOMAIN" "$FILE" | grep -q .; then
