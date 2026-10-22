@@ -32,6 +32,10 @@ PORT="$((10#$PORT))"
 [[ "$PROXY_MODE" == "manual" || "$PROXY_MODE" == "nginx" ]] || { echo "Выберите manual или nginx"; exit 1; }
 [[ "$APP_DIR" != "$SRC" && "$APP_DIR" != "$SRC/"* && "$SRC" != "$APP_DIR/"* ]] || { echo "Каталог установки не должен совпадать с каталогом исходников"; exit 1; }
 if [[ -L "$APP_DIR" ]]; then echo "Установка в симлинк запрещена"; exit 1; fi
+case "$APP_DIR" in
+  /opt/*|/srv/*|/var/lib/*) ;;
+  *) echo "Каталог установки должен находиться под /opt, /srv или /var/lib (systemd ProtectHome)"; exit 1;;
+esac
 if [[ -e "$APP_DIR" && ! -f "$APP_DIR/server.mjs" ]]; then
   echo "Каталог уже существует и не принадлежит нашему приложению"; exit 1
 fi
