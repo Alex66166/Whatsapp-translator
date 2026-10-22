@@ -15,3 +15,4 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: sudo bash test/backup-smoke.sh
+      - run: sudo bash test/tls-smoke.sh
