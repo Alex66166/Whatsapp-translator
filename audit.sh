@@ -25,7 +25,7 @@ cmd lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
 cmd uptime
 section "Полный перечень установленных пакетов (названия и версии)"
 if command -v dpkg-query >/dev/null 2>&1; then
-  dpkg-query -W -f='\x24{binary:Package} \x24{Version}\n' 2>/dev/null || :
+  dpkg-query -W -f='${binary:Package} ${Version}\n' 2>/dev/null || :
 fi
 if command -v snap >/dev/null 2>&1; then snap list 2>&1 || :; fi
 if command -v flatpak >/dev/null 2>&1; then flatpak list --columns=application,version 2>&1 || :; fi
