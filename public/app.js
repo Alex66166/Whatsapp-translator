@@ -53,6 +53,7 @@ function setStatus(data) {
   if (data.qr) $('qr').src = data.qr;
   else $('qr').removeAttribute('src');
   $('reconnect').hidden = !['logged_out', 'error', 'disconnected'].includes(state.status);
+  $('reconnect').textContent = state.status === 'logged_out' ? 'Привязать WhatsApp заново' : 'Переподключить';
   $('pairing-title').textContent = state.status === 'logged_out' ? 'Сессия отключена. Требуется новая привязка.' : 'Подключение WhatsApp';
   $('pairing-details').textContent = data.qr
     ? 'В телефоне: WhatsApp → Связанные устройства → Привязка устройства → сканировать QR.'
@@ -151,7 +152,7 @@ function renderMessages(messages) {
     else if (m.direction === 'in' && m.translated) bubble.append(el('div', 'original', m.original));
     const footer = el('div', 'msg-meta');
     const t = new Date(m.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    const status = { translating: 'Переводится', ready: 'Переведено', sent: 'Отправлено', 'sent-original': 'Отправлено из WhatsApp без перевода', sending: 'Отправляется', error: 'Ошибка — не подтверждено' };
+    const status = { translating: 'Переводится', ready: 'Переведено', sent: 'Отправлено', 'sent-original': 'Отправлено из WhatsApp без перевода', sending: 'Отправляется', error: 'Ошибка — не подтверждено', uncertain: 'Доставка не подтверждена' };
     footer.textContent = t + ' · ' + (status[m.state] || m.state);
     bubble.append(footer);
     if (m.direction === 'in' && m.state === 'error') {
@@ -214,8 +215,17 @@ $('logout').addEventListener('click', async () => {
   displayLogin();
 });
 $('reconnect').addEventListener('click', async () => {
-  try { await api('/connect', { method: 'POST', body: '{}' }); await refreshAll(); }
-  catch (e) { notification(e.message); }
+  try {
+    if (state.status === 'logged_out') {
+      if (!window.confirm('WhatsApp отвязал это устройство. Повторная привязка создаст новую сессию. Продолжить?')) return;
+      const password = window.prompt('Введите пароль входа в переводчик для повторной привязки:');
+      if (!password) return;
+      await api('/relink', { method: 'POST', body: JSON.stringify({ password, confirm: 'RELINK' }) });
+    } else {
+      await api('/connect', { method: 'POST', body: '{}' });
+    }
+    await refreshAll();
+  } catch (e) { notification(e.message); }
 });
 $('search').addEventListener('input', renderChats);
 $('only-enabled').addEventListener('change', renderChats);
