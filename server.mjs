@@ -11,6 +11,7 @@ import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { translate } from './lib/translate.mjs';
+import { migrateMessages, bindWhatsAppAck } from './lib/message-ledger.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
@@ -28,18 +29,7 @@ db.exec([
   'CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, jid TEXT NOT NULL, direction TEXT NOT NULL, original TEXT NOT NULL, translated TEXT, state TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY(jid) REFERENCES chats(jid))',
   'CREATE INDEX IF NOT EXISTS messages_jid_time ON messages(jid, created_at DESC)'
 ].join(';') + ';');
-// Migration for installations created before image support.
-const columns = new Set(db.prepare('PRAGMA table_info(messages)').all().map(c => c.name));
-if (!columns.has('media_mime')) db.exec('ALTER TABLE messages ADD COLUMN media_mime TEXT');
-if (!columns.has('media_state')) db.exec('ALTER TABLE messages ADD COLUMN media_state TEXT');
-if (!columns.has('media_bytes')) db.exec('ALTER TABLE messages ADD COLUMN media_bytes INTEGER');
-if (!columns.has('source_language')) db.exec('ALTER TABLE messages ADD COLUMN source_language TEXT');
-if (!columns.has('wa_id')) db.exec('ALTER TABLE messages ADD COLUMN wa_id TEXT');
-db.exec('CREATE UNIQUE INDEX IF NOT EXISTS message_wa_id_unique ON messages(jid,wa_id) WHERE wa_id IS NOT NULL');
-// Never resend outgoing on boot: previous WhatsApp delivery might have succeeded.
-db.prepare("UPDATE messages SET state='uncertain' WHERE direction='out' AND state IN ('translating','sending')").run();
-db.prepare("UPDATE messages SET media_state='error' WHERE media_state='loading'").run();
-
+migrateMessages(db);
 
 const stmt = {
   chat: db.prepare('SELECT * FROM chats WHERE jid = ?'),
@@ -208,11 +198,10 @@ function queueIncoming(id, text, target) {
 }
 // Attach the acknowledged WhatsApp message ID to the local optimistic entry.
 // A mirror event may arrive before or after sendMessage() resolves.
-const bindOutgoingWaId = db.transaction((id, jid, remoteId) => {
-  const mirror = stmt.duplicateWa.get(jid, remoteId);
-  if (mirror && mirror.id !== id) stmt.deleteDuplicate.run(mirror.id);
-  stmt.claimWa.run(remoteId, id);
-});
+function bindOutgoingWaId(localId, jid, remoteId) {
+  bindWhatsAppAck(db, localId, jid, remoteId);
+}
+
 function ingest(message) {
   const jid = message?.key?.remoteJid;
   if (!validChat(jid) || !message?.key?.id || message?.key?.participant) return;
