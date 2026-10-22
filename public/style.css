@@ -51,3 +51,5 @@ input[type=checkbox]{accent-color:#128468;width:17px;height:17px}.chat-list{over
  .messages{padding:11px}.bubble{max-width:92%}.compose{padding:8px}.compose-actions small{max-width:120px}
  .compose-actions .primary{font-size:12px;padding:10px}.pairing{flex-wrap:wrap;text-align:center}.pairing img{width:155px;height:155px}
 }
+
+.chat-photo{display:block;max-width:100%;max-height:480px;object-fit:contain;border-radius:8px;cursor:zoom-in;margin-bottom:8px}.photo-status{font-size:12px;color:#9b6b2d;padding-bottom:8px}

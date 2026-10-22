@@ -1,91 +1,152 @@
-# WhatsApp Translator
+# WhatsApp Translator — личный WhatsApp с автоматическим переводом
 
-Private, self-hosted WhatsApp translation inbox for **Windows 11 and Android**. One linked WhatsApp account, as many individual chats as WhatsApp synchronizes, translation via **Groq Cloud** (no local language model).
+Приватный веб-клиент для переписки с иностранными контактами WhatsApp. **Один номер WhatsApp**, произвольное число личных чатов, список контактов загружается динамически. На Windows 11 и Android используется один и тот же сайт/PWA. Ты читаешь входящие на русском и пишешь по-русски; собеседник получает текст на выбранном для него языке.
 
-> **Initial MVP; not yet tested against a real WhatsApp account.** Baileys uses an unofficial WhatsApp protocol. Using it may risk temporary or permanent account restrictions. Never use this project for bulk messaging, unsolicited outreach or scraping.
+**Статус: MVP.** Код собирается и проверяется автоматически в GitHub Actions. Реальные подключение WhatsApp по QR, приём фотографий и стабильность длительной работы на конкретном VPS требуют отдельного тестирования. Проект использует неофициальную библиотеку Baileys; использование может привести к ограничениям или блокировке аккаунта WhatsApp.
 
-## Capabilities
+## Принцип работы
 
-- One WhatsApp number; link once by QR code in **Linked Devices**.
-- Dynamic list and search of chats; **no hardcoded contacts, numbers or chat IDs**.
-- Translation is **off by default** for each chat. Enable and set the contact's target language independently.
-- Incoming: contact's language → Russian, with source text visible.
-- Outgoing: write Russian → Groq translates → WhatsApp receives translated text. Both variants remain visible locally.
-- Free-tier Groq API (limited by the provider), SQLite, single Node.js process, web interface with login, QR pairing, SSE updates.
-- Windows browser/desktop shortcut and Android browser/home-screen shortcut.
-- Only selected chats' new text is sent for translation.
+- **Сервер:** Ubuntu 24.04, Node.js, Baileys, Express, SQLite, systemd. Для VPS с 2 ГБ RAM и 4 ГБ SWAP локальная языковая модель не нужна.
+- **Перевод:** Groq Cloud API по HTTPS. Бесплатный тариф ограничен и условия могут измениться.
+- **Интерфейс:** защищённое окно в браузере Windows/Android, можно добавить ярлык как приложение PWA.
+- **Чаты:** загружаются из связанного WhatsApp динамически, **без номеров, имён или чатов, вписанных в код**.
+- **Настройки:** для каждого чата отдельно включается перевод и выбирается язык собеседника; новые чаты по умолчанию не переводятся.
+- **Входящие:** переводятся на русский, под переводом виден оригинал.
+- **Исходящие:** русское сообщение переводится перед отправкой. При сбое Groq русскоязычный текст специально не отправляется.
+- **Фотографии:** изображения из выбранных чатов WhatsApp отображаются в окне переписки; подписи к ним переводятся. Изображения хранит только VPS, доступ к ним возможен после входа в веб-интерфейс. Ограничения по размеру файла и суммарному объёму выбираются при установке.
+- **Исходящие сообщения из обычного WhatsApp:** приложение не подменяет их переводом; доступная синхронизация зависит от Baileys.
 
-**Not in this first version:** group chats, media/voice, native device push notifications, complete history import, multiple WhatsApp accounts. New contact availability depends on WhatsApp synchronization. Messages sent directly from regular WhatsApp are not rewritten by this app.
+Пока нет групп, голосовых сообщений, отправки фотографии **из веб-клиента** в WhatsApp, импорта всей старой истории и системных push-уведомлений. Картинки загружаются только после включения перевода чата; старые фото автоматически не выгружаются. Медиа большого размера, отсутствующие в WhatsApp либо неудачно скачанные могут показываться как недоступные. Сервер ограничивает один файл 1–32 МБ, общий объём — настройкой.
 
-## Server requirements
+## ВАЖНО: установка строго в два этапа
 
-- Ubuntu 24.04 VPS; 2 GB RAM recommended, 4 GB swap optional, 20 GB disk enough for a small text inbox.
-- Public DNS A record pointing at the server; TCP ports **80 and 443** open.
-- Free Groq key: https://console.groq.com/keys (availability/rate limits are not guaranteed).
-- A long web-app administrator password.
-- Node 22 or higher (installer configures Node 22).
-- GitHub SSH credentials/deploy key for cloning this **private** repository.
+**Нельзя автоматически разворачивать приложение на неизвестном VPS.** Сначала выясняем, что работает на сервере: активные службы, сетевые интерфейсы, порты, Nginx/Apache/Caddy/другие reverse-proxy, сайты и виртуальные хосты, Docker/Podman, файрвол, Fail2ban, сертификаты, RAM, SWAP, диски и уже установленные экземпляры приложения.
 
-## Installation
+### Этап 1. Аудит (ТОЛЬКО ЧТЕНИЕ)
 
-Clone this repository to the VPS via SSH (configure a deploy key or GitHub CLI credentials first). Run from the cloned directory:
+Сначала получи код приватного репозитория на VPS: через настроенный SSH-ключ доступа GitHub или GitHub CLI. В корне репозитория выполни:
 
-```bash
-sudo bash install.sh
-```
+~~~bash
+sudo bash audit.sh | tee audit-report.txt
+~~~
 
-Installer prompts for DNS domain, Let's Encrypt email, strong password and Groq key. It copies files to `/opt/whatsapp-translator`, installs dependencies, sets up a dedicated service user, systemd, Nginx reverse proxy and HTTPS.
+Или:
 
-**Important:** do not use a domain already configured in another Nginx virtual host without checking conflicts. Existing `.env` and `.data` are preserved when reinstalling. The VPS needs working DNS and reachable port 80 for Let's Encrypt to succeed. The installer does not adjust firewall rules. Node dependencies are installed from npm.
+~~~bash
+sudo bash install.sh | tee audit-report.txt
+~~~
 
-After installation:
+Эти команды выполняют **только аудит**: не устанавливают пакеты, не создают службы, не меняют настройки портов, Nginx, SSH, файрвола и сертификатов. В отчёте нет содержимого конфигураций с ключами или переменных окружения, но содержатся IP, домены, процессы и сетевые правила — **не публикуй отчёт**. Поделись отчётом в приватном чате для разбора. До анализа отчёта **не запускай** deploy.sh.
 
-1. Open `https://YOUR-DOMAIN` in Chrome/Edge on Windows or Android.
-2. Log in with the password chosen during installation.
-3. On the phone, go to **WhatsApp → Linked Devices → Link a device**, then scan the QR code shown in the web client.
-4. Wait for synchronization. Select a contact, turn on **Translation**, and enter a language, e.g. **Montenegrin (Latin script, Ijekavian)**.
-5. Read the Russian translations and write Russian replies. **Enter** sends; **Shift+Enter** adds a new line.
+Если аудит выявит уже занятые 80/443, действующий виртуальный хост, другой веб-сервер, конкурирующие контейнеры или недостаток ресурсов, выбираем подходящий вариант установки **после анализа конкретного сервера**, а не заранее.
 
-If translation fails, an incoming message has a **Retry translation** action. Outgoing messages won't intentionally be sent in Russian when translation fails. However, **network failures can leave delivery uncertain**; before trying again, check the ordinary WhatsApp conversation to avoid duplicate messages.
+### Этап 2. Согласование и развёртывание
 
-## Operations
+После разбора отчёта запускаем:
 
-```bash
-sudo systemctl status whatsapp-translator
-sudo journalctl -u whatsapp-translator -n 100 --no-pager
-sudo systemctl restart whatsapp-translator
-```
+~~~bash
+sudo bash deploy.sh
+~~~
 
-To update: `git pull` in your original clone and rerun `sudo bash install.sh`. The installer keeps local session credentials. Back up `/opt/whatsapp-translator/.env` and `/opt/whatsapp-translator/.data` into **encrypted storage**. These files include sensitive login and WhatsApp session material. Never commit either file.
+Установщик повторно запросит путь к изученному отчёту (не старше 48 часов), потребует явного подтверждения, покажет план изменений и перед реальными действиями ещё раз спросит согласие.
 
-## Architecture
+Все параметры установки **вводятся во время установки**, а не записываются под конкретный сервер в исходниках:
 
-```
-WhatsApp <-> Baileys 6.7.24 <-> Node.js / Express <-> SQLite
-                                  |
-                                  +-- Groq Cloud translation
-                                  |
-                                  +-- Nginx HTTPS <-> Windows / Android PWA
-```
+| Параметр | Когда запрашивается |
+|---|---|
+| Путь к отчёту и подтверждение его изучения | Всегда |
+| Каталог установки, имя службы systemd, системный пользователь | Всегда |
+| Свободный локальный TCP-порт | Всегда |
+| Имя DNS-домена для HTTPS | Всегда |
+| Режим reverse-proxy: \`manual\` или \`nginx\` | Всегда |
+| Адрес email сертификата и webroot ACME | В режиме \`nginx\` |
+| Пароль веб-интерфейса, ключ Groq | При первой установке |
+| Имя модели Groq, язык по умолчанию | При первой установке |
+| Максимальный размер фотографии и квота для фото | При первой установке |
+| Отдельный каталог бэкапов | При переустановке/обновлении |
 
-No Docker, Chromium, Redis or local LLM.
+**\`manual\` — рекомендуемый режим для занятого VPS.** Установщик запускает Node.js **только на 127.0.0.1** и создаёт образец конфигурации reverse-proxy, но не меняет текущие Nginx, Caddy, Apache и сертификаты. Далее адаптируем конфигурацию по результатам аудита. Пока HTTPS не настроен, удалённо открывать веб-приложение нельзя.
 
-## Development
+**\`nginx\` — только если аудит допускает отдельный vhost.** Установщик проверяет конфликты домена, файла виртуального хоста и портов, после подтверждения добавляет отдельный сайт и получает сертификат Let's Encrypt. Существующие сайты не должны удаляться или перезаписываться. Служба Nginx может быть перезагружена, поэтому выбирай этот режим только после согласования воздействия на уже работающие сайты.
 
-Copy `.env.example` to `.env` and provide a Groq key, a random session secret and an admin password hash in format `salt_hex:scrypt_digest_hex`. The production installer generates the hash automatically. For a **local-only** HTTP setup, set `COOKIE_SECURE=0`; never run with insecure cookies on a publicly exposed HTTP port.
+**Безопасность:** внутренний Node-порт всегда ограничен loopback. Настройка файрвола, DNS и других приложений не меняется автоматически. Для HTTPS должны работать DNS и нужные внешние порты. Пароли, ключ API и сессия WhatsApp хранятся только на VPS в файлах, исключённых из Git.
 
-```bash
-npm install
-npm run check
-npm test
-npm start
-```
+## Работа пользователя
 
-The app listens on `127.0.0.1:3080` by default.
+1. Открыть готовый адрес по HTTPS с Windows или смартфона.
+2. Ввести пароль веб-приложения.
+3. На смартфоне открыть WhatsApp → **Связанные устройства** → **Привязка устройства** и отсканировать QR из браузера.
+4. Выбрать нужный чат из автоматически загруженного списка, включить перевод, указать язык контакта (например, **Montenegrin (Latin script, Ijekavian)**).
+5. Читать русский перевод входящих и фотографии. При наличии подписи под фото переводится подпись.
+6. Писать по-русски и отправлять в веб-окне. Enter — отправить, Shift+Enter — новая строка.
+7. На Windows/Android добавить этот сайт как приложение/ярлык.
 
-## Security and caveats
+Один аккаунт — несколько выбранных чатов. Для каждого отдельные настройки; ничего не нужно привязывать заново. Если Groq исчерпал лимит, входящую фразу можно перевести повторно позже. Если исходящая отправка завершилась ошибкой, прежде чем повторять, проверь обычный WhatsApp: при разрыве сети статус доставки может быть неопределённым.
 
-- Selected message contents are sent to Groq for translation. Review the provider's privacy/data handling before confidential use.
-- Secure cookies and a password gate protect the web interface. Only expose the HTTPS Nginx endpoint; the Node port is loopback-only.
-- Session tokens stored under `.data/auth` allow access to the WhatsApp account.
-- This initial implementation has not yet been tested with live WhatsApp pairing, LID contact mappings and long-term reconnections. Validate with a noncritical account before relying on it.
+## Резервное копирование
+
+В каталоге исходников запусти:
+
+~~~bash
+sudo bash backup.sh
+~~~
+
+Скрипт запросит текущий каталог приложения, **отдельный абсолютный каталог копий**, имя службы и **пароль шифрования** (минимум 12 символов). Если введена служба, работающий процесс временно останавливается, чтобы согласованно сохранить SQLite, и запускается снова. Сохраняются:
+
+- \`.env\` (ключ Groq, параметры и хеш пароля);
+- \`.data/auth\` (сессия связанного WhatsApp);
+- \`.data/messages.sqlite\` и служебные журналы SQLite;
+- \`.data/media\` (фотографии).
+
+Копия создаётся **зашифрованной в потоковом режиме AES-256-CBC с PBKDF2** (\`*.tar.gz.enc\`), без временного открытого архива. После сохранения проверяется чтение архива. Закрытые ключи и сообщения внутри: обязательно перенеси копию **за пределы VPS**, желательно в отдельное защищённое хранилище. **Потерянный пароль шифрования восстановить нельзя.**
+
+На работающем сервере нельзя бездумно копировать файл SQLite с незавершёнными транзакциями. Поэтому для штатного бэкапа предусмотрена короткая остановка службы.
+
+## Переустановка и обновление
+
+**Вариант А — поверх существующей установки.** Сохраняем каталог \`.data\` и файл \`.env\`: отчёт аудита → согласование конфигурации → \`sudo bash deploy.sh\`. Установщик перед заменой кода **обязательно создаёт зашифрованную резервную копию** и только потом продолжает. Для обновления выбирай тот же каталог/порт; сервис перезапускается после обновления. Никакие данные не лежат в репозитории GitHub.
+
+**Вариант Б — чистый VPS.** Сначала забираем проверенный зашифрованный архив на другое устройство. После переустановки ОС/нового VPS проводим новый аудит, устанавливаем приложение заново, настраиваем домен/HTTPS, потом восстанавливаем секреты и переписку из архива:
+
+~~~bash
+sudo bash restore.sh
+~~~
+
+Скрипт спрашивает каталог установки, службу и файл бэкапа, проверяет архив до остановки сервиса, затем по отдельному подтверждению заменяет \`.env\` и \`.data\` и запускает службу. **Перед восстановлением текущую установку тоже следует сохранить отдельным бэкапом.**
+
+Настройки systemd/веб-сервера в бэкап не входят: они зависят от нового окружения и устанавливаются заново на основании нового аудита. Не копируй автоматически конфигурации Nginx со старого сервера: это может сломать уже работающие сайты.
+
+## Управление после установки
+
+~~~bash
+sudo systemctl status ИМЯ_СЛУЖБЫ
+sudo journalctl -u ИМЯ_СЛУЖБЫ -n 100 --no-pager
+sudo systemctl restart ИМЯ_СЛУЖБЫ
+~~~
+
+Имя службы будет тем, которое введено при развёртывании. Для проверки синтаксиса кода и установочных скриптов используется GitHub Actions.
+
+## Ограничения и риски
+
+- **Baileys — неофициальный WhatsApp Web-протокол.** Существуют риски отключения связанного устройства или блокировки номера.
+- Для перевода содержимое включённых чатов отправляется в облачный сервис Groq. Обсуждая конфиденциальные финансы, договоры или личные данные, учитывай обработку текста третьей стороной.
+- Сессия Baileys — секрет, утечка которого позволяет получить доступ к WhatsApp.
+- Изображения хранятся локально в защищённом каталоге VPS; запрашивать их может только авторизованный пользователь. Размер и суммарный объём ограничены.
+- Бесплатные лимиты Groq и выбранные модели могут изменяться; перевод не гарантирован при исчерпании квоты.
+- Код проходит автоматические проверки, но полноценные тесты реальной привязки WhatsApp и загрузки медиа требуют сервера и телефона.
+
+## Структура
+
+| Файл | Назначение |
+|---|---|
+| \`audit.sh\` | Диагностика без изменения сервера |
+| \`install.sh\` | Безопасная точка входа: только аудит |
+| \`deploy.sh\` | Интерактивное развёртывание после аудита |
+| \`backup.sh\` | Зашифрованный бэкап сессии, базы и фото |
+| \`restore.sh\` | Восстановление данных после переустановки |
+| \`server.mjs\` | WhatsApp, API, чаты, изображения, SQLite |
+| \`lib/translate.mjs\` | Groq API |
+| \`public/\` | Веб-интерфейс/PWA |
+| \`.env.example\` | Шаблон переменных окружения без секретов |
+
+Для локальной разработки: \`npm install && npm run check && npm test\`. Реальные ключи и база не должны попадать в GitHub.

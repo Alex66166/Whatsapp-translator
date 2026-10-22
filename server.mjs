@@ -1,11 +1,11 @@
 import 'dotenv/config';
 import express from 'express';
 import Database from 'better-sqlite3';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import QRCode from 'qrcode';
-import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID, createHash } from 'node:crypto';
+import { mkdirSync, writeFileSync, existsSync, statSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { translate } from './lib/translate.mjs';
@@ -14,6 +14,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
 const DEFAULT_LANGUAGE = process.env.DEFAULT_TARGET_LANGUAGE || 'Montenegrin (Latin script, Ijekavian)';
 mkdirSync(DATA, { recursive: true, mode: 0o700 });
+const MEDIA_DIR = path.join(DATA, 'media');
+mkdirSync(MEDIA_DIR, { recursive: true, mode: 0o700 });
+const MEDIA_MAX_BYTES = Math.min(32, Math.max(1, Number(process.env.MEDIA_MAX_MB || 8))) * 1048576;
+const MEDIA_TOTAL_BYTES = Math.max(10, Number(process.env.MEDIA_TOTAL_MB || 512)) * 1048576;
 const db = new Database(path.join(DATA, 'messages.sqlite'));
 db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 5000');
@@ -22,6 +26,12 @@ db.exec([
   'CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, jid TEXT NOT NULL, direction TEXT NOT NULL, original TEXT NOT NULL, translated TEXT, state TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY(jid) REFERENCES chats(jid))',
   'CREATE INDEX IF NOT EXISTS messages_jid_time ON messages(jid, created_at DESC)'
 ].join(';') + ';');
+// Migration for installations created before image support.
+const columns = new Set(db.prepare('PRAGMA table_info(messages)').all().map(c => c.name));
+if (!columns.has('media_mime')) db.exec('ALTER TABLE messages ADD COLUMN media_mime TEXT');
+if (!columns.has('media_state')) db.exec('ALTER TABLE messages ADD COLUMN media_state TEXT');
+if (!columns.has('media_bytes')) db.exec('ALTER TABLE messages ADD COLUMN media_bytes INTEGER');
+
 
 const stmt = {
   chat: db.prepare('SELECT * FROM chats WHERE jid = ?'),
@@ -33,7 +43,9 @@ const stmt = {
   addMsg: db.prepare('INSERT OR IGNORE INTO messages(id,jid,direction,original,translated,state,created_at) VALUES(?,?,?,?,?,?,?)'),
   updateMsg: db.prepare('UPDATE messages SET translated=?,state=? WHERE id=?'),
   stateMsg: db.prepare('UPDATE messages SET state=? WHERE id=?'),
-  msg: db.prepare('SELECT * FROM messages WHERE id=?')
+  msg: db.prepare('SELECT * FROM messages WHERE id=?'),
+  mediaState: db.prepare('UPDATE messages SET media_state=?,media_mime=?,media_bytes=? WHERE id=?'),
+  mediaUsage: db.prepare("SELECT COALESCE(SUM(media_bytes),0) AS bytes FROM messages WHERE media_state='ready'")
 };
 let wa = null;
 let connection = 'starting';
@@ -74,7 +86,7 @@ function updateContact(contact) {
     if (stmt.chat.get(jid)) stmt.title.run(name, jid);
   }
 }
-function textOf(message) {
+function bodyOf(message) {
   let m = message?.message;
   for (let i = 0; i < 4 && m; i++) {
     if (m.ephemeralMessage) { m = m.ephemeralMessage.message; continue; }
@@ -83,9 +95,55 @@ function textOf(message) {
     if (m.documentWithCaptionMessage) { m = m.documentWithCaptionMessage.message; continue; }
     break;
   }
+  return m;
+}
+function textOf(message) {
+  const m = bodyOf(message);
   return m?.conversation || m?.extendedTextMessage?.text ||
     m?.imageMessage?.caption || m?.videoMessage?.caption || '';
 }
+const allowedMimes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const pictureQueue = [];
+let pictureRunning = false;
+function queueImage(id, rawMessage, image) {
+  if (pictureQueue.length >= 40) {
+    stmt.mediaState.run('error', null, null, id);
+    emit();
+    return;
+  }
+  pictureQueue.push({ id, rawMessage, image });
+  void drainPictures();
+}
+async function drainPictures() {
+  if (pictureRunning) return;
+  pictureRunning = true;
+  try {
+    while (pictureQueue.length) {
+      const { id, rawMessage, image } = pictureQueue.shift();
+      try {
+        const mime = image.mimetype || 'image/jpeg';
+        const reported = Number(image.fileLength?.low ?? image.fileLength ?? 0);
+        if (!allowedMimes.has(mime)) throw new Error('Unsupported image MIME');
+        if (reported && reported > MEDIA_MAX_BYTES) throw new Error('Image exceeds size limit');
+        if (!wa) throw new Error('WhatsApp is disconnected');
+        const buffer = await downloadMediaMessage(rawMessage, 'buffer', {}, {
+          logger: log,
+          reuploadRequest: wa.updateMediaMessage?.bind(wa)
+        });
+        if (!Buffer.isBuffer(buffer) || buffer.length > MEDIA_MAX_BYTES) throw new Error('Image exceeds size limit');
+        if (stmt.mediaUsage.get().bytes + buffer.length > MEDIA_TOTAL_BYTES) throw new Error('Image storage quota reached');
+        const file = path.join(MEDIA_DIR, createHash('sha256').update(id).digest('hex') + '.image');
+        writeFileSync(file, buffer, { mode: 0o600, flag: 'wx' });
+        stmt.mediaState.run('ready', mime, buffer.length, id);
+      } catch (error) {
+        log.warn({ error: error.message }, 'Image unavailable');
+        stmt.mediaState.run('error', null, null, id);
+      }
+      emit();
+    }
+  } finally { pictureRunning = false; }
+}
+
 async function runQueue() {
   if (running) return;
   running = true;
@@ -112,7 +170,8 @@ function ingest(message) {
   const jid = message?.key?.remoteJid;
   if (!validChat(jid) || !message?.key?.id || message?.key?.participant) return;
   const text = textOf(message);
-  if (typeof text !== 'string' || !text.trim()) return;
+  const image = bodyOf(message)?.imageMessage;
+  if ((!text || !text.trim()) && !image) return;
   const timestamp = Number(message.messageTimestamp?.low ?? message.messageTimestamp ?? 0);
   const timeMs = Number.isFinite(timestamp) && timestamp > 0 ? timestamp * 1000 : Date.now();
   const pushName = message.pushName || '';
@@ -122,11 +181,15 @@ function ingest(message) {
   if (!chat?.enabled) { emit(); return; }
   const id = jid + '|' + message.key.id;
   const self = !!message.key.fromMe;
-  const result = stmt.addMsg.run(id, jid, self ? 'out' : 'in', text,
-    self ? text : null, self ? 'sent-original' : 'translating', timeMs);
+  const result = stmt.addMsg.run(id, jid, self ? 'out' : 'in', text || '',
+    self ? text || '' : null, self ? 'sent-original' : text ? 'translating' : 'ready', timeMs);
   if (!result.changes) return;
+  if (image) {
+    stmt.mediaState.run('loading', null, null, id);
+    queueImage(id, message, image);
+  }
   emit();
-  if (!self) queueIncoming(id, text, chat.target_language);
+  if (!self && text?.trim()) queueIncoming(id, text, chat.target_language);
 }
 function scheduleReconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -340,6 +403,21 @@ app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
     emit();
     return res.status(502).json({ error: 'Not sent or status uncertain: ' + error.message + '. Check the chat before trying again.' });
   }
+});
+app.get('/api/messages/:id/image', requireAuth, (req, res) => {
+  const id = req.params.id;
+  const record = stmt.msg.get(id);
+  if (!record || record.media_state !== 'ready' || !allowedMimes.has(record.media_mime))
+    return res.status(404).end();
+  const file = path.join(MEDIA_DIR, createHash('sha256').update(id).digest('hex') + '.image');
+  if (!existsSync(file)) return res.status(404).end();
+  res.setHeader('Content-Type', record.media_mime);
+  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  const stream = createReadStream(file);
+  stream.on('error', () => { if (!res.headersSent) res.status(500).end(); else res.destroy(); });
+  stream.pipe(res);
 });
 app.post('/api/messages/retry', requireAuth, (req, res) => {
   const row = stmt.msg.get(req.body?.id);

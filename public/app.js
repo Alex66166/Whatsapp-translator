@@ -130,7 +130,23 @@ function renderMessages(messages) {
   for (const m of messages) {
     const bubble = el('article', 'bubble ' + (m.direction === 'out' ? 'out' : 'in'));
     const display = (m.direction === 'in' ? m.translated : m.original) || m.original;
-    bubble.append(el('div', 'text', display));
+    if (m.media_state === 'ready') {
+      const photo = el('img', 'chat-photo');
+      photo.alt = 'Фото из WhatsApp';
+      photo.loading = 'lazy';
+      photo.src = '/api/messages/' + encodeURIComponent(m.id) + '/image';
+      photo.addEventListener('click', () => window.open(photo.src, '_blank', 'noopener,noreferrer'));
+      photo.tabIndex = 0;
+      photo.addEventListener('keydown', e => {
+        if (e.key === 'Enter') window.open(photo.src, '_blank', 'noopener,noreferrer');
+      });
+      bubble.append(photo);
+    } else if (m.media_state === 'loading') {
+      bubble.append(el('div', 'photo-status', '⏳ Загрузка изображения из WhatsApp…'));
+    } else if (m.media_state === 'error') {
+      bubble.append(el('div', 'photo-status', '⚠️ Фото недоступно (лимит, истёк срок или ошибка загрузки)'));
+    }
+    if (display) bubble.append(el('div', 'text', display));
     if (m.translated && m.translated !== display) bubble.append(el('div', 'original', m.translated));
     else if (m.direction === 'in' && m.translated) bubble.append(el('div', 'original', m.original));
     const footer = el('div', 'msg-meta');
