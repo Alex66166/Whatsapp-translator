@@ -23,6 +23,25 @@ cmd df -hT
 cmd df -i
 cmd lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
 cmd uptime
+section "Полный перечень установленных пакетов (названия и версии)"
+if command -v dpkg-query >/dev/null 2>&1; then
+  dpkg-query -W -f='\x24{binary:Package} \x24{Version}\n' 2>/dev/null || :
+fi
+if command -v snap >/dev/null 2>&1; then snap list 2>&1 || :; fi
+if command -v flatpak >/dev/null 2>&1; then flatpak list --columns=application,version 2>&1 || :; fi
+section "Каталоги пользовательских приложений (метаданные, без содержимого)"
+for rootdir in /opt /srv /var/www /usr/local/bin /etc/systemd/system; do
+  if [[ -d "$rootdir" ]]; then
+    find "$rootdir" -mindepth 1 -maxdepth 1 -printf '%y %p\n' 2>/dev/null | sort || :
+  fi
+done
+section "Systemd timers и socket activation"
+cmd systemctl list-timers --all --no-pager
+cmd systemctl list-sockets --all --no-pager
+section "Планировщик cron: только имена системных задач"
+for crondir in /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly; do
+  if [[ -d "$crondir" ]]; then find "$crondir" -maxdepth 1 -type f -printf '%p\n' 2>/dev/null | sort; fi
+done
 section "Сетевые интерфейсы, адреса, маршруты"
 cmd ip -brief address
 cmd ip route
