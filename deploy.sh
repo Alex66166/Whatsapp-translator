@@ -129,7 +129,8 @@ if [[ "$PROXY_MODE" == "nginx" ]]; then apt-get install -y nginx certbot; fi
 if ! id "$APPUSER" >/dev/null 2>&1; then
   useradd --system --user-group --home-dir "$APP_DIR" --shell /usr/sbin/nologin "$APPUSER"
 fi
-install -d -m 750 -o "$APPUSER" -g "$APPUSER" "$APP_DIR"
+APPGROUP="$(id -gn "$APPUSER")"
+install -d -m 750 -o "$APPUSER" -g "$APPGROUP" "$APP_DIR"
 rsync -a --exclude='.git/' --exclude='.env' --exclude='.data/' --exclude='node_modules/' --exclude='audit-report.txt' --exclude='audit-*.txt' "$SRC/" "$APP_DIR/"
 if [[ "$EXISTING" -eq 0 ]]; then
   SALT="$(openssl rand -hex 16)"
@@ -150,8 +151,8 @@ if [[ "$EXISTING" -eq 0 ]]; then
 else
   # Конфигурация обновления не меняется без явного согласования.
 fi
-install -d -m 700 -o "$APPUSER" -g "$APPUSER" "$APP_DIR/.data"
-chown -R "$APPUSER:$APPUSER" "$APP_DIR"
+install -d -m 700 -o "$APPUSER" -g "$APPGROUP" "$APP_DIR/.data"
+chown -R "$APPUSER:$APPGROUP" "$APP_DIR"
 runuser -u "$APPUSER" -- env HOME="$APP_DIR" sh -c 'cd "$1" && npm install --omit=dev --no-audit --no-fund && npm run check' sh "$APP_DIR"
 
 cat > "/etc/systemd/system/$SERVICE.service" <<UNIT
@@ -163,7 +164,7 @@ After=network-online.target
 [Service]
 Type=simple
 User=$APPUSER
-Group=$APPUSER
+Group=$APPGROUP
 WorkingDirectory=$APP_DIR
 ExecStart=$(command -v node) $APP_DIR/server.mjs
 Environment=NODE_ENV=production
