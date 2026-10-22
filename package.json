@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check public/app.js && node --check lib/translate.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "doctor": "node tools/doctor.mjs"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.24",
