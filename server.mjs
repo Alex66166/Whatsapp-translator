@@ -5,7 +5,9 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaile
 import pino from 'pino';
 import QRCode from 'qrcode';
 import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID, createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync, existsSync, createReadStream } from 'node:fs';
+import { mkdirSync, createWriteStream, existsSync, unlinkSync, createReadStream } from 'node:fs';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { translate } from './lib/translate.mjs';
@@ -128,15 +130,31 @@ async function drainPictures() {
         if (!allowedMimes.has(mime)) throw new Error('Unsupported image MIME');
         if (reported && reported > MEDIA_MAX_BYTES) throw new Error('Image exceeds size limit');
         if (!wa) throw new Error('WhatsApp is disconnected');
-        const buffer = await downloadMediaMessage(rawMessage, 'buffer', {}, {
-          logger: log,
-          reuploadRequest: wa.updateMediaMessage?.bind(wa)
-        });
-        if (!Buffer.isBuffer(buffer) || buffer.length > MEDIA_MAX_BYTES) throw new Error('Image exceeds size limit');
-        if (stmt.mediaUsage.get().bytes + buffer.length > MEDIA_TOTAL_BYTES) throw new Error('Image storage quota reached');
+        const remaining = MEDIA_TOTAL_BYTES - stmt.mediaUsage.get().bytes;
+        if (remaining <= 0) throw new Error('Image storage quota reached');
+        const maxBytes = Math.min(MEDIA_MAX_BYTES, remaining);
         const file = path.join(MEDIA_DIR, createHash('sha256').update(id).digest('hex') + '.image');
-        writeFileSync(file, buffer, { mode: 0o600, flag: 'wx' });
-        stmt.mediaState.run('ready', mime, buffer.length, id);
+        let downloaded = 0;
+        try {
+          // Streamed transfer: no complete photo Buffer in 2-GB VPS memory.
+          const stream = await downloadMediaMessage(rawMessage, 'stream', {}, {
+            logger: log,
+            reuploadRequest: wa.updateMediaMessage?.bind(wa)
+          });
+          const limiter = new Transform({
+            transform(chunk, encoding, callback) {
+              downloaded += chunk.length;
+              if (downloaded > maxBytes) callback(new Error('Image size or disk quota exceeded'));
+              else callback(null, chunk);
+            }
+          });
+          await pipeline(stream, limiter, createWriteStream(file, { flags: 'wx', mode: 0o600 }));
+          if (!downloaded) throw new Error('Empty image');
+          stmt.mediaState.run('ready', mime, downloaded, id);
+        } catch (error) {
+          if (existsSync(file)) unlinkSync(file);
+          throw error;
+        }
       } catch (error) {
         log.warn({ error: error.message }, 'Image unavailable');
         stmt.mediaState.run('error', null, null, id);
