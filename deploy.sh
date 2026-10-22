@@ -30,7 +30,7 @@ ask SERVICE "Служба systemd" "${WA_REC_SERVICE:-whatsapp-translator}"
 ask APPUSER "Системный пользователь" "${WA_REC_APPUSER:-wttranslator}"
 ask PORT "Локальный порт" "${WA_REC_PORT:-3080}"
 ask DOMAIN "Домен HTTPS" "${WA_REC_DOMAIN:-}"
-echo "Реверс-прокси: [manual] ничего не меняем, создаём шаблон; [nginx] добавляем отдельный Nginx vhost после проверок."
+echo "Реверс-прокси: manual (без изменений); nginx (новый); nginx-existing/apache-existing/caddy-existing (интеграция в работающий HTTPS-сервер)."
 ask PROXY_MODE "Режим reverse-proxy (manual/nginx)" "${WA_REC_PROXY_MODE:-manual}"
 [[ "$APP_DIR" = /* && "$APP_DIR" =~ ^/[a-zA-Z0-9_./-]+$ && "$APP_DIR" != "/" && "$APP_DIR" != "/opt" && "$APP_DIR" != "/srv" ]] || { echo "Небезопасный путь приложения"; exit 1; }
 [[ "$SERVICE" =~ ^[a-zA-Z0-9_-]+$ && "$APPUSER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "Недопустимые имена пользователя или службы"; exit 1; }
@@ -38,7 +38,7 @@ ask PROXY_MODE "Режим reverse-proxy (manual/nginx)" "${WA_REC_PROXY_MODE:-m
 (( 10#$PORT >= 1024 && 10#$PORT <= 65535 )) || { echo "Выберите TCP-порт 1024–65535"; exit 1; }
 PORT="$((10#$PORT))"
 [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ && "$DOMAIN" == *.* && "$DOMAIN" != -* ]] || { echo "Некорректный домен"; exit 1; }
-[[ "$PROXY_MODE" == "manual" || "$PROXY_MODE" == "nginx" ]] || { echo "Выберите manual или nginx"; exit 1; }
+[[ "$PROXY_MODE" =~ ^(manual|nginx|nginx-existing|apache-existing|caddy-existing)$ ]] || { echo "Неизвестный режим reverse-proxy"; exit 1; }
 [[ "$APP_DIR" != "$SRC" && "$APP_DIR" != "$SRC/"* && "$SRC" != "$APP_DIR/"* ]] || { echo "Каталог установки не должен совпадать с каталогом исходников"; exit 1; }
 if [[ -L "$APP_DIR" ]]; then echo "Установка в симлинк запрещена"; exit 1; fi
 case "$APP_DIR" in
@@ -115,7 +115,13 @@ fi
 echo
 echo "==== ПЛАН ИЗМЕНЕНИЙ ===="
 printf 'Каталог: %s\nSystemd: %s\nПользователь: %s\nПривязка: 127.0.0.1:%s\nДомен: %s\nРеверс-прокси: %s\n' "$APP_DIR" "$SERVICE" "$APPUSER" "$PORT" "$DOMAIN" "$PROXY_MODE"
-echo "Установятся необходимые пакеты/Node.js, приложение и systemd. Файрвол и действующие vhost не будут меняться."
+echo "Установятся необходимые пакеты/Node.js, приложение и systemd. Файрвол не меняется."
+if [[ "$PROXY_MODE" == *-existing ]]; then
+  echo "После установки будет запрошено отдельное подтверждение INTEGRATE."
+  echo "Nginx/Apache: только отдельный сайт с подходящим действующим TLS-сертификатом."
+  echo "Caddy: отдельный сайт со штатным управлением сертификатами."
+  echo "Перед изменениями создаётся резервная копия затрагиваемого файла и выполняется проверка/откат."
+fi
 if [[ "$PROXY_MODE" == "nginx" ]]; then
   echo "Будет добавлен отдельный vhost Nginx, получен сертификат Let's Encrypt."
 else
@@ -262,8 +268,16 @@ CONF
   nginx -t
   systemctl reload nginx
   echo "Готово: https://$DOMAIN"
+elif [[ "$PROXY_MODE" == *-existing ]]; then
+  echo "Подключаем к уже работающему HTTPS-серверу; все изменения требуют подтверждения."
+  if ! bash "$SRC/integrate-existing.sh" "$PROXY_MODE" "$DOMAIN" "$PORT" "$SERVICE"; then
+    echo "HTTPS-интеграция не выполнена. Сервис остаётся доступным только локально."
+    echo "Ни один существующий сайт не должен оставаться изменённым после ошибки."
+    echo "Для ручной конфигурации: $APP_DIR/deploy-examples/nginx-example.conf"
+    exit 1
+  fi
 else
-  echo "Приложение запущено локально. Согласуйте TLS/reverse-proxy по шаблону:"
+  echo "Приложение запущено локально. Подключите существующий HTTPS reverse-proxy:"
   echo "$APP_DIR/deploy-examples/nginx-example.conf"
 fi
 echo "Служба: systemctl status $SERVICE"
