@@ -78,21 +78,35 @@ if [[ -z "$PORT" ]]; then
 fi
 [[ -n "$PORT" ]] || { echo "Нет свободного порта в рекомендованном диапазоне; требуется ручной анализ."; exit 1; }
 PROXY="nginx"
-WHY="Порты 80/443 свободны, предлагается отдельный Nginx."
-if ss -H -ltnp | grep -E '(:80|:443)[[:space:]]' | grep -q .; then
-  PROXY="manual"; WHY="HTTP/HTTPS заняты: не изменяем существующий веб-сервер."
-fi
+WHY="Не обнаружено занятого HTTP/HTTPS-сервера: возможна новая установка Nginx."
+RUNNING=()
 for service in nginx apache2 caddy; do
-  if systemctl is-active --quiet "$service" 2>/dev/null; then
-    PROXY="manual"; WHY="Работает $service: безопаснее интегрироваться вручную."
-  fi
+  if systemctl is-active --quiet "$service" 2>/dev/null; then RUNNING+=("$service"); fi
 done
-if [[ -f "$APP_DIR/.env" ]]; then
-  PROXY="manual"; WHY="Обнаружена прежняя установка; сохраняем существующую конфигурацию HTTPS."
+LISTENERS="$(ss -H -ltnp '( sport = :80 or sport = :443 )' 2>/dev/null || :)"
+if [[ "${#RUNNING[@]}" -eq 1 ]]; then
+  case "${RUNNING[0]}" in
+    nginx) PROXY="nginx-existing" ;;
+    apache2) PROXY="apache-existing" ;;
+    caddy) PROXY="caddy-existing" ;;
+  esac
+  WHY="Найден работающий ${RUNNING[0]}. Предлагается отдельный HTTPS-сайт через этот сервер с проверкой и откатом."
+  if [[ -n "$LISTENERS" ]]; then
+    if printf '%s\n' "$LISTENERS" | grep -v "\"${RUNNING[0]}\"" | grep -q .; then
+      PROXY="manual"; WHY="На HTTP/HTTPS обнаружены слушатели, не принадлежащие выбранному веб-серверу."
+    fi
+  fi
+elif [[ "${#RUNNING[@]}" -gt 1 ]]; then
+  PROXY="manual"; WHY="Несколько работающих веб-серверов: нужен ручной выбор."
+elif [[ -n "$LISTENERS" ]]; then
+  PROXY="manual"; WHY="HTTP/HTTPS-порты заняты неизвестным приложением."
 fi
-if [[ "$PROXY" == "nginx" && -d /etc/nginx/sites-enabled ]] &&
+if [[ -f "$APP_DIR/.env" ]]; then
+  PROXY="manual"; WHY="Найдена прежняя установка: автоматически переподключать TLS нельзя."
+fi
+if [[ "$PROXY" == nginx ]] && [[ -d /etc/nginx/sites-enabled ]] &&
   find /etc/nginx/sites-enabled -mindepth 1 -maxdepth 1 | grep -q .; then
-  PROXY="manual"; WHY="Обнаружены конфигурации Nginx, требуется согласование с действующими сайтами."
+  PROXY="manual"; WHY="Есть конфигурация Nginx, но сервер не запущен: нужен ручной анализ."
 fi
 echo
 echo "=== РЕКОМЕНДУЕМАЯ КОНФИГУРАЦИЯ ==="
