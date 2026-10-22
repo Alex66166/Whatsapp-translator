@@ -94,8 +94,7 @@ function bodyOf(message) {
   let m = message?.message;
   for (let i = 0; i < 4 && m; i++) {
     if (m.ephemeralMessage) { m = m.ephemeralMessage.message; continue; }
-    if (m.viewOnceMessage) { m = m.viewOnceMessage.message; continue; }
-    if (m.viewOnceMessageV2) { m = m.viewOnceMessageV2.message; continue; }
+    if (m.viewOnceMessage || m.viewOnceMessageV2 || m.imageMessage?.viewOnce) return null;
     if (m.documentWithCaptionMessage) { m = m.documentWithCaptionMessage.message; continue; }
     break;
   }
