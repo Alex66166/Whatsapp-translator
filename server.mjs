@@ -5,13 +5,14 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaile
 import pino from 'pino';
 import QRCode from 'qrcode';
 import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID, createHash } from 'node:crypto';
-import { mkdirSync, createWriteStream, existsSync, unlinkSync, createReadStream, renameSync } from 'node:fs';
+import { mkdirSync, createWriteStream, existsSync, unlinkSync, createReadStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { translate } from './lib/translate.mjs';
 import { migrateMessages, bindWhatsAppAck } from './lib/message-ledger.mjs';
+import { retireLinkedAuth } from './lib/auth-session.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
@@ -397,13 +398,8 @@ app.post('/api/relink', requireAuth, (req, res) => {
   if (req.body?.confirm !== 'RELINK' || !checkHash(req.body?.password || ''))
     return res.status(403).json({ error: 'Password and RELINK confirmation required' });
   try {
-    const authPath = path.join(DATA, 'auth');
-    if (existsSync(authPath)) {
-      const suffix = new Date().toISOString().replace(/[:.]/g, '-');
-      const retiredPath = path.join(DATA, 'auth-retired-' + suffix);
-      renameSync(authPath, retiredPath);
-      log.warn('Former WhatsApp credentials retained in restricted session-backup folder');
-    }
+    const retiredPath = retireLinkedAuth(DATA);
+    if (retiredPath) log.warn('Former WhatsApp credentials retained in restricted session-backup folder');
     ++generation;
     wa = null;
     clearTimeout(reconnectTimer);
