@@ -162,7 +162,7 @@ if [[ "$EXISTING" -eq 0 ]]; then
   chmod 600 "$APP_DIR/.env"
   unset PASSWORD GROQ HASH SALT
 else
-  # Конфигурация обновления не меняется без явного согласования.
+  : # При обновлении сохранённый .env не меняется.
 fi
 install -d -m 700 -o "$APPUSER" -g "$APPGROUP" "$APP_DIR/.data"
 chown -R "$APPUSER:$APPGROUP" "$APP_DIR"
