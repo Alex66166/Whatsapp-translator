@@ -50,7 +50,7 @@ const stmt = {
   duplicateWa: db.prepare('SELECT id FROM messages WHERE jid=? AND wa_id=?'),
   claimWa: db.prepare('UPDATE messages SET wa_id=? WHERE id=?'),
   deleteDuplicate: db.prepare('DELETE FROM messages WHERE id=?'),
-  sendingMatch: db.prepare("SELECT id FROM messages WHERE jid=? AND direction='out' AND translated=? AND state IN ('sending','sent','uncertain') AND created_at>? ORDER BY created_at DESC LIMIT 1")
+  sendingMatch: db.prepare("SELECT id FROM messages WHERE jid=? AND direction='out' AND translated=? AND wa_id IS NULL AND state IN ('sending','uncertain') AND created_at>? ORDER BY created_at DESC LIMIT 1")
 };
 let wa = null;
 let connection = 'starting';
@@ -223,7 +223,7 @@ function ingest(message) {
     // Do not create a duplicate for a message from this web client while
     // WhatsApp is still acknowledging the send; bindOutgoingWaId will
     // reconcile a mirrored event if it arrives first.
-    const pending = stmt.sendingMatch.get(jid, text || '', Date.now() - 5 * 60000);
+    const pending = stmt.sendingMatch.get(jid, text || '', Date.now() - 90000);
     if (pending) {
       try { bindOutgoingWaId(pending.id, jid, message.key.id); } catch (err) {
         log.warn({ error: err.message }, 'Outgoing mirror reconciliation failed');
