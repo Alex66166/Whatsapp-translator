@@ -42,7 +42,7 @@ const db = new Database(path.join(DATA, 'messages.sqlite'));
 db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 5000');
 db.exec([
-  'CREATE TABLE IF NOT EXISTS chats (jid TEXT PRIMARY KEY, title TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, target_language TEXT NOT NULL, last_activity INTEGER NOT NULL DEFAULT 0)',
+  'CREATE TABLE IF NOT EXISTS chats (jid TEXT PRIMARY KEY, title TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, target_language TEXT NOT NULL, last_activity INTEGER NOT NULL DEFAULT 0)',
   'CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, jid TEXT NOT NULL, direction TEXT NOT NULL, original TEXT NOT NULL, translated TEXT, state TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY(jid) REFERENCES chats(jid))',
   'CREATE INDEX IF NOT EXISTS messages_jid_time ON messages(jid, created_at DESC)',
   'CREATE TABLE IF NOT EXISTS phonebook (phone TEXT PRIMARY KEY, name TEXT NOT NULL)'
@@ -56,7 +56,7 @@ const stmt = {
   chats: db.prepare('SELECT * FROM chats ORDER BY last_activity DESC, jid ASC LIMIT 20'),
   imported: db.prepare('SELECT phone,name FROM phonebook ORDER BY name COLLATE NOCASE'),
   importContact: db.prepare('INSERT INTO phonebook(phone,name) VALUES(?,?) ON CONFLICT(phone) DO UPDATE SET name=excluded.name'),
-  addChat: db.prepare('INSERT INTO chats(jid,title,target_language,last_activity) VALUES(?,?,?,?) ON CONFLICT(jid) DO UPDATE SET last_activity=MAX(chats.last_activity,excluded.last_activity)'),
+  addChat: db.prepare('INSERT INTO chats(jid,title,enabled,target_language,last_activity) VALUES(?,?,1,?,?) ON CONFLICT(jid) DO UPDATE SET last_activity=MAX(chats.last_activity,excluded.last_activity)'),
   title: db.prepare('UPDATE chats SET title=?, name_rank=? WHERE jid=?'),
   setting: db.prepare('UPDATE chats SET enabled=?, target_language=? WHERE jid=?'),
   messages: db.prepare('SELECT * FROM (SELECT * FROM messages WHERE jid=? ORDER BY created_at DESC LIMIT 150) ORDER BY created_at ASC'),
