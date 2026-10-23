@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
-import { resetContactCache } from '../lib/contact-cache.mjs';
+import { resetContactCache, hideContact } from '../lib/contact-cache.mjs';
 import { recentChats } from '../lib/recent-chats.mjs';
 
 function setup() {
@@ -58,5 +58,20 @@ test('newly discovered chats are translation enabled by default; manual OFF rema
   const server=readFileSync(new URL('../server.mjs',import.meta.url),'utf8');
   assert.match(server,/enabled INTEGER NOT NULL DEFAULT 1/);
   assert.match(server,/INSERT INTO chats\(jid,title,enabled,target_language,last_activity\) VALUES\(\?,\?,1,\?,\?\)/);
+  db.close();
+});
+
+test('hide one chat from UI without deleting its messages or changing language',()=>{
+  const db=setup();
+  db.prepare('INSERT INTO chats VALUES(?,?,?,?,?,?)').run('123@lid','Personal name',1,'German',1700000000000,2);
+  db.prepare('INSERT INTO messages VALUES(?,?,?,?)').run('msg-1','123@lid','Message body','ready');
+  assert.equal(hideContact(db,'123@lid'),true);
+  assert.equal(recentChats(db).length,0);
+  const row=db.prepare('SELECT * FROM chats WHERE jid=?').get('123@lid');
+  assert.equal(row.title,'123');
+  assert.equal(row.target_language,'German');
+  assert.equal(row.enabled,1);
+  assert.equal(db.prepare('SELECT original FROM messages WHERE id=?').get('msg-1').original,'Message body');
+  assert.throws(()=>hideContact(db,'group@g.us'),/Invalid/);
   db.close();
 });
