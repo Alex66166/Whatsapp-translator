@@ -39,7 +39,8 @@ test('Web UI discovers chats dynamically, switches contacts, and keeps recipient
     const languages=[...w.document.querySelectorAll('#target-language option')];
     assert.equal(languages.length,20);
     assert.ok(languages.some(item=>item.value==='Montenegrin (Latin script, Ijekavian)'));
-    assert.ok(w.document.getElementById('contacts-vcf'));
+    assert.equal(w.document.getElementById('contacts-vcf'),null);
+    assert.equal(w.document.getElementById('add-phone-form'),null);
     const list=w.document.querySelectorAll('#chat-list .chat-item');
     assert.equal(list.length,2);
     assert.match(list[0].textContent,/Даниэла/);
@@ -63,17 +64,7 @@ test('Web UI discovers chats dynamically, switches contacts, and keeps recipient
     assert.match(readFileSync(new URL('../public/style.css',import.meta.url),'utf8'),/@media\(max-width:700px\)/);
     assert.ok(w.document.getElementById('mobile-back'));
     assert.match(w.document.getElementById('chat-counter').textContent, /2/);
-    // A WhatsApp contact missing from initial synchronization can be selected by phone.
-    w.document.getElementById('add-phone').value='+382 67 123456';
-    w.document.getElementById('add-phone-form').dispatchEvent(
-      new w.Event('submit',{bubbles:true,cancelable:true})
-    );
-    await pause(60);
-    const adds=calls.filter(c=>c.endpoint==='/api/chats/by-phone');
-    assert.equal(adds.length,1);
-    assert.equal(JSON.parse(adds[0].opts.body).phone,'+382 67 123456');
-    assert.equal(w.document.getElementById('chat-name').textContent,'38267123456');
-    assert.match(w.document.getElementById('chat-counter').textContent,/3/);
+    assert.match(w.document.getElementById('chat-counter').textContent,/Последние личные чаты: 2\/20/);
   } finally {
     dom.window.close();
   }
