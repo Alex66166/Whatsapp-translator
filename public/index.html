@@ -50,6 +50,11 @@
               <button id="add-phone-btn" class="secondary small" type="submit">Добавить</button>
             </div>
           </form>
+          <div class="contact-import">
+            <label for="contacts-vcf">Полная телефонная книга: импорт контактов (.vcf)</label>
+            <input id="contacts-vcf" type="file" accept=".vcf,text/vcard,text/x-vcard">
+            <small>Импортируются только имена и номера, без переписки</small>
+          </div>
         </div>
         <div id="chat-list" class="chat-list" role="list"></div>
       </aside>
