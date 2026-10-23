@@ -259,6 +259,37 @@ $('reconnect').addEventListener('click', async () => {
     await refreshAll();
   } catch (e) { notification(e.message); }
 });
+$('clear-contacts').addEventListener('click', async () => {
+  const confirmation = window.prompt(
+    'Очистить ВСЕ сохранённые контакты из списка? Сообщения и WhatsApp-сессия сохранятся. Для подтверждения введите СБРОС:'
+  );
+  if (confirmation !== 'СБРОС') return;
+  try {
+    await api('/contacts/reset', {
+      method: 'POST', body: JSON.stringify({ confirm: 'RESET' })
+    });
+    state.selected = null;
+    state.chats = [];
+    $('app').classList.remove('show-conversation');
+    renderChats();
+    renderHeader();
+    await refreshAll();
+    notification('Список очищен. Контакты появятся при новых событиях WhatsApp.');
+  } catch (error) { notification(error.message); }
+});
+$('remove-contact').addEventListener('click', async () => {
+  const contact = currentChat();
+  if (!contact) return;
+  if (!window.confirm('Убрать «' + contactLabel(contact) +
+    '» из списка? Переписка и WhatsApp-сессия сохранятся.')) return;
+  try {
+    await api('/contacts/' + encodeURIComponent(contact.jid), { method: 'DELETE' });
+    state.selected = null;
+    $('app').classList.remove('show-conversation');
+    await refreshAll();
+    notification('Контакт убран из списка.');
+  } catch (error) { notification(error.message); }
+});
 $('search').addEventListener('input', renderChats);
 $('only-enabled').addEventListener('change', renderChats);
 $('enable-chat').addEventListener('change', async e => {
