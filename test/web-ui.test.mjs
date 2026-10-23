@@ -36,6 +36,10 @@ test('Web UI discovers chats dynamically, switches contacts, and keeps recipient
     w.eval(script);
     await pause(60);
     assert.equal(w.document.getElementById('login').hidden,true);
+    const languages=[...w.document.querySelectorAll('#target-language option')];
+    assert.equal(languages.length,20);
+    assert.ok(languages.some(item=>item.value==='Montenegrin (Latin script, Ijekavian)'));
+    assert.ok(w.document.getElementById('contacts-vcf'));
     const list=w.document.querySelectorAll('#chat-list .chat-item');
     assert.equal(list.length,2);
     assert.match(list[0].textContent,/Даниэла/);
