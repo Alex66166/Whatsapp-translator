@@ -9,7 +9,7 @@
 **Основной и рекомендуемый способ установки** — один интерактивный скрипт, который сам скачивает проект, проверяет сервер, подбирает параметры и запускает установку только после твоего подтверждения.
 
 ~~~bash
-curl -fsSL https://raw.githubusercontent.com/Alex66166/Whatsapp_translater/main/bootstrap.sh -o /tmp/wa-bootstrap.sh && sudo bash /tmp/wa-bootstrap.sh
+curl -fsSL https://raw.githubusercontent.com/Alex66166/Whatsapp-translator/main/bootstrap.sh -o /tmp/wa-bootstrap.sh && sudo bash /tmp/wa-bootstrap.sh
 ~~~
 
 Перед запуском:
@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/Alex66166/Whatsapp_translater/main/
 Если ранее имена или список контактов синхронизировались неправильно, можно однократно **сбросить контактный кэш** во время обновления, сохранив привязку WhatsApp, сообщения, фотографии, токены и выбранные языки:
 
 ~~~bash
-curl -fsSL https://raw.githubusercontent.com/Alex66166/Whatsapp_translater/main/upgrade.sh -o /tmp/wa-upgrade.sh && sudo bash /tmp/wa-upgrade.sh --reset-contacts
+curl -fsSL https://raw.githubusercontent.com/Alex66166/Whatsapp-translator/main/upgrade.sh -o /tmp/wa-upgrade.sh && sudo bash /tmp/wa-upgrade.sh --reset-contacts
 ~~~
 
 Во время обновления оставь прежний внешний HTTPS-порт, нажав Enter. Опция `--reset-contacts` очищает локальную импортированную адресную книгу, сохранённые имена и отметки активности. Ненужные строки чатов удаляются, а строки, на которые ссылаются сохранённые сообщения, остаются без имён и с нулевой активностью. После сброса **в левой панели не останется старых контактов**; перевод включится по умолчанию для всех очищенных и вновь появляющихся записей. Если пользователь вручную выключит перевод для какого-либо контакта, настройка далее сохраняется.
@@ -111,7 +111,7 @@ curl -fsSL https://raw.githubusercontent.com/Alex66166/Whatsapp_translater/main/
 Для обновления уже установленного VPS с сохранением WhatsApp-сессии, настроек, порта и TLS:
 
 ~~~bash
-curl -fsSL https://raw.githubusercontent.com/Alex66166/Whatsapp_translater/main/upgrade.sh -o /tmp/wa-upgrade.sh && sudo bash /tmp/wa-upgrade.sh
+curl -fsSL https://raw.githubusercontent.com/Alex66166/Whatsapp-translator/main/upgrade.sh -o /tmp/wa-upgrade.sh && sudo bash /tmp/wa-upgrade.sh
 ~~~
 
 Скрипт уточнит внешний HTTPS-порт. Для сохранения нынешнего значения нажми Enter. После успешного обновления обнови страницу браузера **Ctrl+F5**. Старые сессии WhatsApp повторно привязывать не требуется.
@@ -188,7 +188,7 @@ cd /opt/whatsapp-translator && sudo -u wttranslator npm run doctor
 sudo bash /opt/whatsapp-translator/audit.sh
 ~~~
 
-Для отдельной проверки исходников: `npm install`, `npm run check`, `npm test`. Результаты автоматических проверок смотри в [GitHub Actions](https://github.com/Alex66166/Whatsapp_translater/actions).
+Для отдельной проверки исходников: `npm install`, `npm run check`, `npm test`. Результаты автоматических проверок смотри в [GitHub Actions](https://github.com/Alex66166/Whatsapp-translator/actions).
 
 ## Безопасность и ограничения
 
