@@ -41,26 +41,15 @@
     <main class="workspace">
       <aside class="sidebar">
         <div class="filters">
-          <input id="search" type="search" placeholder="Поиск по загруженным контактам…" aria-label="Поиск по загруженным контактам">
-          <div id="chat-counter" class="chat-counter" aria-live="polite">Загрузка чатов…</div>
+          <input id="search" type="search" placeholder="Поиск среди 20 последних чатов…" aria-label="Поиск среди 20 последних чатов">
+          <div id="chat-counter" class="chat-counter" aria-live="polite">Последние 20 собеседников</div>
           <label class="toggle-label"><input id="only-enabled" type="checkbox"> Только с переводом</label>
-          <form id="add-phone-form" class="add-phone-form">
-            <label for="add-phone">Нет контакта в списке? Введи номер с кодом страны</label>
-            <div class="add-phone-controls">
-              <input id="add-phone" type="tel" inputmode="tel" placeholder="+382 67 123456" autocomplete="tel" aria-label="Номер WhatsApp">
-              <button id="add-phone-btn" class="secondary small" type="submit">Добавить</button>
-            </div>
-          </form>
-          <div class="contact-import">
-            <label for="contacts-vcf">Полная телефонная книга: импорт контактов (.vcf)</label>
-            <input id="contacts-vcf" type="file" accept=".vcf,text/vcard,text/x-vcard">
-            <small>Импортируются только имена и номера, без переписки</small>
-          </div>
+          <small class="muted">Только контакты последних личных чатов; прежние сообщения не загружаются.</small>
         </div>
         <div id="chat-list" class="chat-list" role="list"></div>
       </aside>
       <section class="conversation">
-        <div id="empty" class="empty">Выберите переписку слева. Сначала подключите WhatsApp по QR-коду.</div>
+        <div id="empty" class="empty">Выберите контакт из последних 20 личных чатов слева.</div>
         <div id="active-chat" class="active-chat" hidden>
           <div class="chat-header">
             <div class="chat-title">
