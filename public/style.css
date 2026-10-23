@@ -60,3 +60,10 @@ input[type=checkbox]{accent-color:#128468;width:17px;height:17px}.chat-list{over
 .add-phone-controls{display:flex;gap:5px;min-width:0}
 .add-phone-controls input{min-width:0;flex:1;padding:8px;font-size:12px}
 .add-phone-controls button{flex-shrink:0;font-size:12px;padding:7px}
+
+.storage-status{font-size:11px;color:#ddf6ed;white-space:nowrap}
+.contact-import{display:flex;flex-direction:column;gap:5px;border-top:1px solid #dfe8e5;padding-top:9px}
+.contact-import label{font-size:11px;line-height:1.35;color:#56655f}
+.contact-import input{width:100%;max-width:100%;font-size:11px}
+.contact-import small{color:#88948f;font-size:10px}
+@media(max-width:700px){.storage-status{display:none}}
