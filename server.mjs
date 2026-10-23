@@ -75,6 +75,7 @@ let connection = 'starting';
 let qrImage = null;
 let generation = 0;
 let reconnectTimer = null;
+let lastDisconnectCode = null;
 const people = new Map();
 const clients = new Set();
 let running = false;
@@ -275,9 +276,9 @@ function ingest(message) {
   if (self) stmt.claimWa.run(message.key.id, id);
   if (!self && text?.trim()) queueIncoming(id, text, chat.target_language);
 }
-function scheduleReconnect() {
+function scheduleReconnect(delayMs = 7000) {
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => { reconnectTimer = null; void connectWhatsApp(); }, 7000);
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; void connectWhatsApp(); }, delayMs);
 }
 async function connectWhatsApp() {
   if (wa) return;
@@ -294,15 +295,23 @@ async function connectWhatsApp() {
       auth: state,
       logger: log,
       printQRInTerminal: false,
-      syncFullHistory: false,
       markOnlineOnConnect: false,
-      // Ask WhatsApp for the most complete linked-device chat/contact history.
-      // Baileys may still receive fewer contacts than the Android phonebook.
-      browser: Browsers.macOS('Desktop'),
-      syncFullHistory: process.env.WHATSAPP_FULL_SYNC !== '0'
+      // Full-history sync from a desktop browser can be expensive on a 2GB VPS.
+      // Default to the known working lightweight linked-device profile.
+      // Explicitly opt in with WHATSAPP_FULL_SYNC=1 if the server has capacity.
+      ...(process.env.WHATSAPP_FULL_SYNC === '1'
+        ? { browser: Browsers.macOS('Desktop'), syncFullHistory: true }
+        : { syncFullHistory: false })
     });
     wa = sock;
-    sock.ev.on('creds.update', saveCreds);
+    // Persist rotating credentials in order. An immediate 515 restart must
+    // wait for the fresh session to be written to disk first.
+    let pendingCreds = Promise.resolve();
+    sock.ev.on('creds.update', () => {
+      pendingCreds = pendingCreds.then(() => saveCreds()).catch(error => {
+        log.error({ reason: error.message }, 'WhatsApp credential write failed');
+      });
+    });
     sock.ev.on('contacts.upsert', items => { for (const item of items) updateContact(item); emit(); });
     sock.ev.on('contacts.update', items => { for (const item of items) updateContact(item); emit(); });
     sock.ev.on('chats.upsert', items => {
@@ -353,17 +362,27 @@ async function connectWhatsApp() {
         emit();
       }
       if (update.connection === 'open') {
+        lastDisconnectCode = null;
         connection = 'connected';
         qrImage = null;
         emit();
       }
       if (update.connection === 'close') {
         const code = update.lastDisconnect?.error?.output?.statusCode;
+        const closedWhy = update.lastDisconnect?.error?.message || 'Unknown reason';
+        log.warn({ disconnectCode: code ?? null, reason: closedWhy.slice(0, 180) },
+          'WhatsApp transport closed');
+        lastDisconnectCode = Number.isInteger(code) ? code : null;
         wa = null;
         qrImage = null;
         connection = code === DisconnectReason.loggedOut ? 'logged_out' : 'disconnected';
         emit();
-        if (code !== DisconnectReason.loggedOut) scheduleReconnect();
+        // Typical initial-pairing 515 asks for a restart with newly saved keys.
+        await pendingCreds;
+        if (myGeneration !== generation) return;
+        if (code !== DisconnectReason.loggedOut) scheduleReconnect(
+          code === DisconnectReason.restartRequired ? 150 : 7000
+        );
       }
     });
   } catch (error) {
@@ -447,7 +466,7 @@ app.post('/api/logout', requireAuth, (req, res) => {
 app.get('/api/status', requireAuth, (req, res) => {
   const used = storageUsage(db, MEDIA_DIR).bytes;
   res.json({ connection, qr: qrImage, groqConfigured: !!process.env.GROQ_API_KEY,
-    storageUsedBytes: used, storageMaxBytes: STORAGE_TOTAL_BYTES });
+    disconnectCode: lastDisconnectCode, storageUsedBytes: used, storageMaxBytes: STORAGE_TOTAL_BYTES });
 });
 app.post('/api/relink', requireAuth, (req, res) => {
   if (connection !== 'logged_out') return res.status(409).json({ error: 'Re-linking is only available after WhatsApp logged out' });
