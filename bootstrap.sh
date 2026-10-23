@@ -116,6 +116,13 @@ read -rp "Перейти к настройке? [y/N]: " ANSWER
 
 export WA_AUDIT_REPORT="$REPORT"
 export WA_REC_APP_DIR="$APP_DIR" WA_REC_SERVICE="$SERVICE" WA_REC_APPUSER="$APPUSER" WA_REC_PORT="$PORT"
+EXTERNAL_PORT=443
+NGINX_SITE="/etc/nginx/sites-available/$SERVICE.conf"
+if [[ -f "$NGINX_SITE" ]]; then
+  SAVED_TLS_PORT="$(sed -nE 's/^[[:space:]]*listen[[:space:]]+([0-9]+)[[:space:]]+ssl;.*$/\1/p' "$NGINX_SITE" | head -n1)"
+  if [[ "$SAVED_TLS_PORT" =~ ^[0-9]+$ ]]; then EXTERNAL_PORT="$SAVED_TLS_PORT"; fi
+fi
+export WA_REC_EXTERNAL_PORT="$EXTERNAL_PORT"
 export WA_REC_PROXY_MODE="$PROXY" WA_REC_ACME_DIR="/var/www/letsencrypt"
 export WA_REC_MODEL="openai/gpt-oss-120b" WA_REC_LANGUAGE="Montenegrin (Latin script, Ijekavian)"
 export WA_REC_MAX_IMAGE="8" WA_REC_MEDIA_TOTAL="512" WA_REC_BACKUP_DIR="/root/whatsapp-translator-backups"
