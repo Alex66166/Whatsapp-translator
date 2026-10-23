@@ -47,6 +47,11 @@ printf '%s\n%s\n%s\n' "$CERT" "$KEY" INTEGRATE |
 [[ -f "$SITE" && -L "$LINK" ]] || { echo "Valid vhost not created"; exit 1; }
 grep -Fq "proxy_pass http://127.0.0.1:3099;" "$SITE"
 rm -f "$SITE" "$LINK"
+# Configurable public port is independent of the private Node.js port.
+printf '%s\n%s\n%s\n' "$CERT" "$KEY" INTEGRATE |
+  bash integrate-existing.sh nginx-existing "$DOMAIN" 3099 "$SERVICE" 8443 >/dev/null
+grep -Fq 'listen 8443 ssl;' "$SITE"
+rm -f "$SITE" "$LINK"
 if printf '%s\n%s\n%s\n' "$CERT" "$KEY" INTEGRATE |
   WT_TEST_EXISTING_DOMAIN="$DOMAIN" bash integrate-existing.sh nginx-existing "$DOMAIN" 3099 "$SERVICE" 443 >/dev/null 2>&1; then
   echo "Domain conflict was not detected"; exit 1
