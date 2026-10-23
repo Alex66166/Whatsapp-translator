@@ -91,7 +91,19 @@ function renderChats() {
     details.append(el('strong', '', c.title));
     details.append(el('small', '', c.enabled ? '🌐 ' + c.targetLanguage : 'Без перевода'));
     button.append(avatar, details);
-    button.addEventListener('click', () => chooseChat(c.jid));
+    button.addEventListener('click', async () => {
+      if (c.imported) {
+        // Imported vCard numbers have not yet been verified against WhatsApp.
+        try {
+          const result = await api('/chats/by-phone', {
+            method: 'POST',
+            body: JSON.stringify({ phone: c.jid.split('@')[0] })
+          });
+          await refreshAll();
+          chooseChat(result.jid);
+        } catch (error) { notification(error.message); }
+      } else chooseChat(c.jid);
+    });
     list.append(button);
   }
 }
@@ -241,6 +253,27 @@ $('reconnect').addEventListener('click', async () => {
     }
     await refreshAll();
   } catch (e) { notification(e.message); }
+});
+$('contacts-vcf').addEventListener('change', async e => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) {
+    notification('Файл VCF слишком большой (максимум 2 МБ)');
+    e.target.value = '';
+    return;
+  }
+  try {
+    const response = await fetch('/api/contacts/import', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'text/vcard' },
+      body: await file.text()
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Импорт контактов не выполнен');
+    notification('Импортировано контактов: ' + data.added);
+    await refreshAll();
+  } catch (error) { notification(error.message); }
+  finally { e.target.value = ''; }
 });
 $('add-phone-form').addEventListener('submit', async e => {
   e.preventDefault();
