@@ -78,6 +78,9 @@ function renderChats() {
     (!only || c.enabled) &&
     (c.title.toLocaleLowerCase().includes(term) || c.jid.toLowerCase().includes(term))
   );
+  const counter = $('chat-counter');
+  if (counter) counter.textContent = 'Загружено контактов и чатов: ' + state.chats.length +
+    (chats.length !== state.chats.length ? ' · показано: ' + chats.length : '');
   if (!chats.length) list.append(el('p', 'muted list-hint', 'Нет подходящих чатов. Список появится после синхронизации WhatsApp.'));
   for (const c of chats) {
     const button = el('button', 'chat-item');
@@ -226,6 +229,29 @@ $('reconnect').addEventListener('click', async () => {
     }
     await refreshAll();
   } catch (e) { notification(e.message); }
+});
+$('add-phone-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input = $('add-phone');
+  const button = $('add-phone-btn');
+  const phone = input.value.trim();
+  if (!phone) return;
+  button.disabled = true;
+  try {
+    const result = await api('/chats/by-phone', {
+      method: 'POST', body: JSON.stringify({ phone })
+    });
+    input.value = '';
+    $('search').value = '';
+    $('only-enabled').checked = false;
+    await refreshAll();
+    chooseChat(result.jid);
+    notification('Контакт добавлен. Включи перевод для этого чата.');
+  } catch (error) {
+    notification(error.message);
+  } finally {
+    button.disabled = false;
+  }
 });
 $('search').addEventListener('input', renderChats);
 $('only-enabled').addEventListener('change', renderChats);
