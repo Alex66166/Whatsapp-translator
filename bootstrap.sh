@@ -46,10 +46,6 @@ for service in nginx apache2 caddy; do
 done
 echo "=== СЛУШАЮЩИЕ TCP-ПОРТЫ ==="
 ss -H -ltnp || :
-read -rp "Показать полный отчёт? [y/N]: " FULL
-if [[ "$FULL" =~ ^([yY]|[Дд])$ ]]; then
-  if command -v less >/dev/null 2>&1; then less "$REPORT"; else cat "$REPORT"; fi
-fi
 
 # Это рекомендации, не окончательная конфигурация. Любую можно изменить в мастере.
 APP_DIR="/opt/whatsapp-translator"
