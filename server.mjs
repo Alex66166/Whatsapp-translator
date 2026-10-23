@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import Database from 'better-sqlite3';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage, Browsers } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import QRCode from 'qrcode';
 import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID, createHash } from 'node:crypto';
@@ -14,6 +14,7 @@ import { translate } from './lib/translate.mjs';
 import { migrateMessages, bindWhatsAppAck } from './lib/message-ledger.mjs';
 import { retireLinkedAuth } from './lib/auth-session.mjs';
 import { enforceStorageQuota, storageUsage } from './lib/storage-fifo.mjs';
+import { parseVcard } from './lib/vcard.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
@@ -41,13 +42,16 @@ db.pragma('busy_timeout = 5000');
 db.exec([
   'CREATE TABLE IF NOT EXISTS chats (jid TEXT PRIMARY KEY, title TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, target_language TEXT NOT NULL, last_activity INTEGER NOT NULL DEFAULT 0)',
   'CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, jid TEXT NOT NULL, direction TEXT NOT NULL, original TEXT NOT NULL, translated TEXT, state TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY(jid) REFERENCES chats(jid))',
-  'CREATE INDEX IF NOT EXISTS messages_jid_time ON messages(jid, created_at DESC)'
+  'CREATE INDEX IF NOT EXISTS messages_jid_time ON messages(jid, created_at DESC)',
+  'CREATE TABLE IF NOT EXISTS phonebook (phone TEXT PRIMARY KEY, name TEXT NOT NULL)'
 ].join(';') + ';');
 migrateMessages(db);
 
 const stmt = {
   chat: db.prepare('SELECT * FROM chats WHERE jid = ?'),
-  chats: db.prepare('SELECT * FROM chats ORDER BY last_activity DESC, title COLLATE NOCASE LIMIT 5000'),
+  chats: db.prepare('SELECT * FROM chats ORDER BY last_activity DESC, title COLLATE NOCASE'),
+  imported: db.prepare('SELECT phone,name FROM phonebook ORDER BY name COLLATE NOCASE'),
+  importContact: db.prepare('INSERT INTO phonebook(phone,name) VALUES(?,?) ON CONFLICT(phone) DO UPDATE SET name=excluded.name'),
   addChat: db.prepare('INSERT INTO chats(jid,title,target_language,last_activity) VALUES(?,?,?,?) ON CONFLICT(jid) DO UPDATE SET last_activity=MAX(chats.last_activity,excluded.last_activity)'),
   title: db.prepare('UPDATE chats SET title=? WHERE jid=?'),
   setting: db.prepare('UPDATE chats SET enabled=?, target_language=? WHERE jid=?'),
@@ -291,7 +295,11 @@ async function connectWhatsApp() {
       logger: log,
       printQRInTerminal: false,
       syncFullHistory: false,
-      markOnlineOnConnect: false
+      markOnlineOnConnect: false,
+      // Ask WhatsApp for the most complete linked-device chat/contact history.
+      // Baileys may still receive fewer contacts than the Android phonebook.
+      browser: Browsers.macOS('Desktop'),
+      syncFullHistory: process.env.WHATSAPP_FULL_SYNC !== '0'
     });
     wa = sock;
     sock.ev.on('creds.update', saveCreds);
@@ -470,11 +478,41 @@ app.post('/api/connect', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/chats', requireAuth, (req, res) => {
-  res.json(stmt.chats.all().map(c => ({
+  const chats = stmt.chats.all().map(c => ({
     jid: c.jid, title: c.title, enabled: !!c.enabled,
     targetLanguage: c.target_language, lastActivity: c.last_activity
-  })));
+  }));
+  const ids = new Set(chats.map(c => c.jid));
+  for (const person of stmt.imported.all()) {
+    const jid = person.phone + '@s.whatsapp.net';
+    if (!ids.has(jid)) {
+      chats.push({ jid, title: person.name, enabled: false,
+        targetLanguage: DEFAULT_LANGUAGE, lastActivity: 0, imported: true });
+    }
+  }
+  res.json(chats);
 });
+app.post('/api/contacts/import', requireAuth,
+  express.text({ type: ['text/vcard', 'text/x-vcard'], limit: '2mb' }),
+  (req, res) => {
+    try {
+      const contacts = parseVcard(req.body);
+      if (!contacts.length) return res.status(422).json({ error: 'VCF не содержит телефонных номеров в международном формате' });
+      db.transaction(() => {
+        for (const { phone, name } of contacts) {
+          stmt.importContact.run(phone, name);
+          const jid = phone + '@s.whatsapp.net';
+          people.set(jid, name);
+          if (stmt.chat.get(jid)) stmt.title.run(name, jid);
+        }
+      })();
+      emit();
+      return res.json({ added: contacts.length });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+  }
+);
 app.post('/api/chats/by-phone', requireAuth, async (req, res) => {
   // A fallback when WhatsApp does not synchronize its contact list. The phone
   // number is supplied by the user, not hardcoded into application sources.
