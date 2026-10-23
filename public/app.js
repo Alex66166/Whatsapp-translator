@@ -69,6 +69,15 @@ function setStatus(data) {
   updateComposer();
 }
 function initial(name) { return (name || '?').trim().slice(0, 1).toUpperCase(); }
+function contactLabel(chat) {
+  const name = (chat?.title || '').trim();
+  // "A" can be a one-letter WhatsApp push name, not the contact's saved
+  // address-book name. Keep the LID visible to distinguish such people.
+  if (name.length <= 2 && chat?.jid?.endsWith('@lid')) {
+    return (name || 'Контакт') + ' · LID ' + chat.jid.split('@')[0].slice(-7);
+  }
+  return name || chat?.jid || 'Неизвестный контакт';
+}
 function el(tag, className, value) {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -95,7 +104,7 @@ function renderChats() {
     if (c.jid === state.selected) button.classList.add('selected');
     const avatar = el('span', 'avatar', initial(c.title));
     const details = el('span', 'chat-item-text');
-    details.append(el('strong', '', c.title));
+    details.append(el('strong', '', contactLabel(c)));
     details.append(el('small', '', c.enabled ? '🌐 ' + c.targetLanguage : 'Без перевода'));
     button.append(avatar, details);
     button.addEventListener('click', () => chooseChat(c.jid));
@@ -114,7 +123,7 @@ function renderHeader() {
   $('empty').hidden = !!c;
   $('active-chat').hidden = !c;
   if (!c) return;
-  $('chat-name').textContent = c.title;
+  $('chat-name').textContent = contactLabel(c);
   $('chat-jid').textContent = c.jid;
   $('enable-chat').checked = c.enabled;
   const languageSelect = $('target-language');
