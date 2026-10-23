@@ -15,6 +15,7 @@ import { migrateMessages, bindWhatsAppAck } from './lib/message-ledger.mjs';
 import { retireLinkedAuth } from './lib/auth-session.mjs';
 import { enforceStorageQuota, storageUsage } from './lib/storage-fifo.mjs';
 import { parseVcard } from './lib/vcard.mjs';
+import { RECENT_CHAT_LIMIT, chatMetadataTime, recentChats } from './lib/recent-chats.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
@@ -49,7 +50,7 @@ migrateMessages(db);
 
 const stmt = {
   chat: db.prepare('SELECT * FROM chats WHERE jid = ?'),
-  chats: db.prepare('SELECT * FROM chats ORDER BY last_activity DESC, title COLLATE NOCASE'),
+  chats: db.prepare('SELECT * FROM chats ORDER BY last_activity DESC, jid ASC LIMIT 20'),
   imported: db.prepare('SELECT phone,name FROM phonebook ORDER BY name COLLATE NOCASE'),
   importContact: db.prepare('INSERT INTO phonebook(phone,name) VALUES(?,?) ON CONFLICT(phone) DO UPDATE SET name=excluded.name'),
   addChat: db.prepare('INSERT INTO chats(jid,title,target_language,last_activity) VALUES(?,?,?,?) ON CONFLICT(jid) DO UPDATE SET last_activity=MAX(chats.last_activity,excluded.last_activity)'),
@@ -105,14 +106,25 @@ function updateContact(contact) {
   if (!contact) return;
   const name = [contact.name, contact.verifiedName, contact.notify]
     .find(n => typeof n === 'string' && n.trim())?.trim();
-  // Phone-number and private LID aliases are different JIDs for the same user.
-  // Store names for every alias sent by Baileys, without inventing LID mappings.
-  const ids = [contact.id, contact.lid, contact.phoneNumber]
-    .filter((jid, index, list) => validChat(jid) && list.indexOf(jid) === index);
+  if (!name) return;
+  // Contact events are NOT a chat list: do not create conversations for all
+  // address-book entries. Enrich only the actual 20 most recent chats.
+  const selected = new Set(recentChats(db).map(chat => chat.jid));
+  const ids = [contact.id, contact.lid, contact.phoneNumber];
   for (const jid of ids) {
-    if (name) people.set(jid, name);
-    // Insert contacts as selectable conversations, even when no incoming message has arrived.
-    if (name || stmt.chat.get(jid)) touch(jid, name, 0);
+    if (!validChat(jid) || !selected.has(jid)) continue;
+    people.set(jid, name);
+    stmt.title.run(name, jid);
+  }
+}
+function updateChatMetadata(chat) {
+  const jid = chat?.id;
+  if (!validChat(jid)) return;
+  const timestamp = chatMetadataTime(chat);
+  // Missing timestamps do not prove recency. Existing chats may have newer
+  // activity from live message events, which must not be overwritten.
+  if (timestamp || stmt.chat.get(jid)) {
+    touch(jid, chat.name || '', timestamp);
   }
 }
 function bodyOf(message) {
@@ -312,46 +324,40 @@ async function connectWhatsApp() {
         log.error({ reason: error.message }, 'WhatsApp credential write failed');
       });
     });
-    sock.ev.on('contacts.upsert', items => { for (const item of items) updateContact(item); emit(); });
-    sock.ev.on('contacts.update', items => { for (const item of items) updateContact(item); emit(); });
+    sock.ev.on('contacts.upsert', items => {
+      for (const item of items) updateContact(item);
+      emit();
+    });
+    sock.ev.on('contacts.update', items => {
+      for (const item of items) updateContact(item);
+      emit();
+    });
     sock.ev.on('chats.upsert', items => {
-      for (const item of items) touch(item.id, item.name || '', 0);
+      for (const item of items) updateChatMetadata(item);
       emit();
     });
     sock.ev.on('chats.update', items => {
-      for (const item of items) touch(item.id, item.name || '', 0);
+      for (const item of items) updateChatMetadata(item);
       emit();
     });
     sock.ev.on('messaging-history.set', data => {
+      // WhatsApp may transfer an initial history payload as part of linked
+      // device synchronization. Ignore every historical message: do NOT
+      // inspect, save, translate, or download historical message bodies.
+      // Only read chat timestamps and names for the 20 most recent contacts.
+      for (const chat of data.chats || []) updateChatMetadata(chat);
       for (const person of data.contacts || []) updateContact(person);
-      for (const chat of data.chats || []) touch(chat.id, chat.name || '', 0);
-      // Only index the sender/chat metadata of prior messages. Do NOT import or
-      // translate old message bodies or download historical media.
-      for (const msg of data.messages || []) {
-        const jid = msg?.key?.remoteJid;
-        if (validChat(jid) && !msg?.key?.participant) {
-          const name = !msg.key.fromMe ? msg.pushName || '' : '';
-          touch(jid, name, 0);
-        }
-      }
-      log.info({ contacts: (data.contacts || []).length, chats: (data.chats || []).length,
-        messages: (data.messages || []).length }, 'WhatsApp history metadata received');
+      log.info({ chatMetadata: (data.chats || []).length,
+        recent: recentChats(db).length }, 'Recent WhatsApp chat metadata received');
       emit();
     });
     sock.ev.on('messages.upsert', data => {
-      for (const m of data.messages || []) {
-        try {
-          if (data.type === 'notify') ingest(m);
-          else {
-            // Append is used for backfilled WhatsApp events; discover the
-            // conversation without importing/retranslating historical bodies.
-            const jid = m?.key?.remoteJid;
-            if (validChat(jid) && !m.key.participant)
-              touch(jid, !m.key.fromMe ? m.pushName || '' : '', 0);
-          }
-        } catch (error) { log.error({ error: error.message }, 'message ingest failed'); }
+      // 'append' is old/history data. Ignore it entirely.
+      if (data.type !== 'notify') return;
+      for (const message of data.messages || []) {
+        try { ingest(message); }
+        catch (error) { log.error({ error: error.message }, 'Live message ingest failed'); }
       }
-      emit();
     });
     sock.ev.on('connection.update', async update => {
       if (myGeneration !== generation) return;
@@ -497,19 +503,12 @@ app.post('/api/connect', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/chats', requireAuth, (req, res) => {
-  const chats = stmt.chats.all().map(c => ({
+  // Only the twenty most recently active personal chat contacts.
+  // This endpoint never returns previous message bodies or full phonebook.
+  res.json(recentChats(db, RECENT_CHAT_LIMIT).map(c => ({
     jid: c.jid, title: c.title, enabled: !!c.enabled,
     targetLanguage: c.target_language, lastActivity: c.last_activity
-  }));
-  const ids = new Set(chats.map(c => c.jid));
-  for (const person of stmt.imported.all()) {
-    const jid = person.phone + '@s.whatsapp.net';
-    if (!ids.has(jid)) {
-      chats.push({ jid, title: person.name, enabled: false,
-        targetLanguage: DEFAULT_LANGUAGE, lastActivity: 0, imported: true });
-    }
-  }
-  res.json(chats);
+  })));
 });
 app.post('/api/contacts/import', requireAuth,
   express.text({ type: ['text/vcard', 'text/x-vcard'], limit: '2mb' }),
