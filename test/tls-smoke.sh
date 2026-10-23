@@ -38,17 +38,17 @@ MOCK
 chmod +x "$ROOT/bin/nginx" "$ROOT/bin/systemctl"
 export PATH="$ROOT/bin:$PATH"
 if printf '%s\n%s\n%s\n' "$CERT" "$KEY" INTEGRATE |
-  WT_FAIL_RELOAD=1 bash integrate-existing.sh nginx-existing "$DOMAIN" 3099 "$SERVICE" >/dev/null 2>&1; then
+  WT_FAIL_RELOAD=1 bash integrate-existing.sh nginx-existing "$DOMAIN" 3099 "$SERVICE" 443 >/dev/null 2>&1; then
   echo "Expected forced reload error, got success"; exit 1
 fi
 [[ ! -e "$SITE" && ! -e "$LINK" ]] || { echo "Rollback left Nginx files"; exit 1; }
 printf '%s\n%s\n%s\n' "$CERT" "$KEY" INTEGRATE |
-  bash integrate-existing.sh nginx-existing "$DOMAIN" 3099 "$SERVICE" >/dev/null
+  bash integrate-existing.sh nginx-existing "$DOMAIN" 3099 "$SERVICE" 443 >/dev/null
 [[ -f "$SITE" && -L "$LINK" ]] || { echo "Valid vhost not created"; exit 1; }
 grep -Fq "proxy_pass http://127.0.0.1:3099;" "$SITE"
 rm -f "$SITE" "$LINK"
 if printf '%s\n%s\n%s\n' "$CERT" "$KEY" INTEGRATE |
-  WT_TEST_EXISTING_DOMAIN="$DOMAIN" bash integrate-existing.sh nginx-existing "$DOMAIN" 3099 "$SERVICE" >/dev/null 2>&1; then
+  WT_TEST_EXISTING_DOMAIN="$DOMAIN" bash integrate-existing.sh nginx-existing "$DOMAIN" 3099 "$SERVICE" 443 >/dev/null 2>&1; then
   echo "Domain conflict was not detected"; exit 1
 fi
 [[ ! -e "$SITE" && ! -e "$LINK" ]] || { echo "Domain-conflict handling left files"; exit 1; }
