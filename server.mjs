@@ -73,22 +73,28 @@ function validChat(jid) {
     (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid'));
 }
 function shortJid(jid) { return jid.split('@')[0] || jid; }
-function touch(jid, name, timestamp = Date.now()) {
+function touch(jid, name, timestamp = 0) {
   if (!validChat(jid)) return;
-  const title = name || people.get(jid) || shortJid(jid);
+  const label = typeof name === 'string' && name.trim() ? name.trim() : people.get(jid) || shortJid(jid);
   const existing = stmt.chat.get(jid);
-  stmt.addChat.run(jid, title, DEFAULT_LANGUAGE, timestamp);
-  if (name && (!existing || existing.title === shortJid(jid) || people.has(jid))) {
-    stmt.title.run(name, jid);
+  stmt.addChat.run(jid, label, DEFAULT_LANGUAGE, timestamp);
+  // Contact names outrank raw IDs, but a remote pushName must not erase a saved address-book name.
+  if (!existing || (label !== shortJid(jid) && (existing.title === shortJid(jid) || name))) {
+    stmt.title.run(label, jid);
   }
 }
 function updateContact(contact) {
-  const jid = contact?.id;
-  if (!validChat(jid)) return;
-  const name = contact.name || contact.notify || contact.verifiedName;
-  if (name) {
-    people.set(jid, name);
-    if (stmt.chat.get(jid)) stmt.title.run(name, jid);
+  if (!contact) return;
+  const name = [contact.name, contact.verifiedName, contact.notify]
+    .find(n => typeof n === 'string' && n.trim())?.trim();
+  // Phone-number and private LID aliases are different JIDs for the same user.
+  // Store names for every alias sent by Baileys, without inventing LID mappings.
+  const ids = [contact.id, contact.lid, contact.phoneNumber]
+    .filter((jid, index, list) => validChat(jid) && list.indexOf(jid) === index);
+  for (const jid of ids) {
+    if (name) people.set(jid, name);
+    // Insert contacts as selectable conversations, even when no incoming message has arrived.
+    if (name || stmt.chat.get(jid)) touch(jid, name, 0);
   }
 }
 function bodyOf(message) {
@@ -271,17 +277,27 @@ async function connectWhatsApp() {
     sock.ev.on('contacts.upsert', items => { for (const item of items) updateContact(item); emit(); });
     sock.ev.on('contacts.update', items => { for (const item of items) updateContact(item); emit(); });
     sock.ev.on('chats.upsert', items => {
-      for (const item of items) touch(item.id, item.name || '', Date.now());
+      for (const item of items) touch(item.id, item.name || '', 0);
       emit();
     });
     sock.ev.on('chats.update', items => {
-      for (const item of items) touch(item.id, item.name || '', Date.now());
+      for (const item of items) touch(item.id, item.name || '', 0);
       emit();
     });
     sock.ev.on('messaging-history.set', data => {
       for (const person of data.contacts || []) updateContact(person);
-      for (const chat of data.chats || []) touch(chat.id, chat.name || '', Date.now());
-      // Do not translate history en masse or load media into RAM / disk.
+      for (const chat of data.chats || []) touch(chat.id, chat.name || '', 0);
+      // Only index the sender/chat metadata of prior messages. Do NOT import or
+      // translate old message bodies or download historical media.
+      for (const msg of data.messages || []) {
+        const jid = msg?.key?.remoteJid;
+        if (validChat(jid) && !msg?.key?.participant) {
+          const name = !msg.key.fromMe ? msg.pushName || '' : '';
+          touch(jid, name, 0);
+        }
+      }
+      log.info({ contacts: (data.contacts || []).length, chats: (data.chats || []).length,
+        messages: (data.messages || []).length }, 'WhatsApp history metadata received');
       emit();
     });
     sock.ev.on('messages.upsert', data => {
@@ -426,6 +442,28 @@ app.get('/api/chats', requireAuth, (req, res) => {
     jid: c.jid, title: c.title, enabled: !!c.enabled,
     targetLanguage: c.target_language, lastActivity: c.last_activity
   })));
+});
+app.post('/api/chats/by-phone', requireAuth, async (req, res) => {
+  // A fallback when WhatsApp does not synchronize its contact list. The phone
+  // number is supplied by the user, not hardcoded into application sources.
+  const number = String(req.body?.phone ?? '').replace(/[+\s()\-]/g, '');
+  if (!/^[1-9][0-9]{6,14}$/.test(number)) {
+    return res.status(400).json({ error: 'Введите номер с кодом страны (7–15 цифр)' });
+  }
+  if (!wa || connection !== 'connected') {
+    return res.status(503).json({ error: 'WhatsApp не подключён' });
+  }
+  try {
+    const lookup = await wa.onWhatsApp(number);
+    const found = lookup?.find(contact => contact.exists && validChat(contact.jid));
+    if (!found) return res.status(404).json({ error: 'WhatsApp не подтвердил этот номер' });
+    touch(found.jid, people.get(found.jid) || '', 0);
+    emit();
+    return res.json({ jid: found.jid });
+  } catch (error) {
+    log.warn({ error: error.message }, 'WhatsApp phone lookup failed');
+    return res.status(503).json({ error: 'Не удалось проверить номер в WhatsApp. Повтори позже.' });
+  }
 });
 app.get('/api/chats/:jid/messages', requireAuth, (req, res) => {
   const jid = req.params.jid;
