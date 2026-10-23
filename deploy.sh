@@ -86,6 +86,15 @@ if [[ "$EXISTING" -eq 1 ]]; then
 fi
 
 NGINX_SITE="/etc/nginx/sites-available/$SERVICE.conf"
+if [[ "$PROXY_MODE" == "nginx" || "$PROXY_MODE" == "nginx-existing" ]]; then
+  # Nginx may share a public listener with other Nginx hosts, but a different
+  # program or a container publishing that port is a hard conflict.
+  CONFLICT="$(ss -H -ltnp "( sport = :$EXTERNAL_PORT )" 2>/dev/null || :)"
+  if [[ -n "$CONFLICT" ]] && printf '%s\n' "$CONFLICT" | grep -v '"nginx"' | grep -q .; then
+    echo "Внешний порт $EXTERNAL_PORT обслуживает другое приложение. Выберите другой порт."
+    exit 1
+  fi
+fi
 # On an existing server, a non-standard public TLS port must be free or already owned by nginx.
 if [[ "$PROXY_MODE" == "apache-existing" || "$PROXY_MODE" == "caddy-existing" ]] && [[ "$EXTERNAL_PORT" != 443 ]]; then
   echo "Для существующих Apache/Caddy автоматическая интеграция поддерживает внешний 443. Выберите manual для другого порта."; exit 1
@@ -125,7 +134,7 @@ else
   ask TARGET_LANG "Язык собеседников по умолчанию" "${WA_REC_LANGUAGE:-Montenegrin (Latin script, Ijekavian)}"
   [[ "$GROQ_MODEL" =~ ^[a-zA-Z0-9_./-]+$ && "$TARGET_LANG" =~ ^[a-zA-Z0-9.,\ \(\)-]+$ ]] || { echo "Некорректные настройки языка или модели"; exit 1; }
   ask MAX_IMAGE "Лимит одного фото, МБ" "${WA_REC_MAX_IMAGE:-8}"
-  ask MAX_MEDIA "Общая квота фото, МБ" "${WA_REC_MEDIA_TOTAL:-512}"
+  ask MAX_MEDIA "Общая квота сообщений и фотографий (FIFO), МБ" "${WA_REC_MEDIA_TOTAL:-512}"
   [[ "$MAX_IMAGE" =~ ^[0-9]+$ && "$MAX_MEDIA" =~ ^[0-9]+$ ]] || { echo "Лимиты должны быть целыми числами"; exit 1; }
   (( MAX_IMAGE >= 1 && MAX_IMAGE <= 32 && MAX_MEDIA >= MAX_IMAGE && MAX_MEDIA <= 10000 )) || { echo "Лимиты должны быть в диапазоне 1–32 МБ и от размера файла до 10000 МБ"; exit 1; }
 fi
@@ -134,6 +143,9 @@ echo
 echo "==== ПЛАН ИЗМЕНЕНИЙ ===="
 printf 'Каталог: %s\nSystemd: %s\nПользователь: %s\nВнутренний порт: 127.0.0.1:%s\nВнешний HTTPS-порт: %s\nДомен: %s\nРеверс-прокси: %s\n' "$APP_DIR" "$SERVICE" "$APPUSER" "$PORT" "$EXTERNAL_PORT" "$DOMAIN" "$PROXY_MODE"
 echo "Установятся необходимые пакеты/Node.js, приложение и systemd. Файрвол не меняется."
+if [[ "$EXTERNAL_PORT" != 443 ]]; then
+  echo "ВАЖНО: откройте TCP $EXTERNAL_PORT в облачном/локальном файрволе. Let's Encrypt по HTTP-01 требует также TCP 80."
+fi
 if [[ "$PROXY_MODE" == *-existing ]]; then
   echo "После установки будет запрошено отдельное подтверждение INTEGRATE."
   echo "Nginx/Apache: только отдельный сайт с подходящим действующим TLS-сертификатом."
@@ -256,7 +268,7 @@ if [[ "$EXISTING" -eq 0 ]]; then
     printf 'GROQ_API_KEY=%s\n' "$GROQ"
     printf 'GROQ_MODEL=%s\n' "$GROQ_MODEL"
     printf 'DEFAULT_TARGET_LANGUAGE="%s"\n' "$TARGET_LANG"
-    printf 'MEDIA_MAX_MB=%s\nMEDIA_TOTAL_MB=%s\n' "$MAX_IMAGE" "$MAX_MEDIA"
+    printf 'MEDIA_MAX_MB=%s\nMEDIA_TOTAL_MB=%s\nSTORAGE_TOTAL_MB=%s\n' "$MAX_IMAGE" "$MAX_MEDIA" "$MAX_MEDIA"
     printf 'ADMIN_PASSWORD_HASH=%s:%s\n' "$SALT" "$HASH"
     printf 'SESSION_SECRET=%s\n' "$(openssl rand -hex 32)"
     printf 'COOKIE_SECURE=1\nDATA_DIR=.data\n'
