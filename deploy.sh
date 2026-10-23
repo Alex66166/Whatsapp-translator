@@ -30,7 +30,8 @@ echo "Аудит завершён, отчёт сохранён: $AUDIT"
 ask APP_DIR "Каталог приложения" "${WA_REC_APP_DIR:-/opt/whatsapp-translator}"
 ask SERVICE "Служба systemd" "${WA_REC_SERVICE:-whatsapp-translator}"
 ask APPUSER "Системный пользователь" "${WA_REC_APPUSER:-wttranslator}"
-ask PORT "Локальный порт" "${WA_REC_PORT:-3080}"
+ask PORT "Локальный порт Node.js (только 127.0.0.1)" "${WA_REC_PORT:-3080}"
+ask EXTERNAL_PORT "Внешний порт HTTPS (стандартно 443)" "${WA_REC_EXTERNAL_PORT:-443}"
 ask DOMAIN "Домен HTTPS" "${WA_REC_DOMAIN:-}"
 echo "Реверс-прокси: manual (без изменений); nginx (новый); nginx-existing/apache-existing/caddy-existing (интеграция в работающий HTTPS-сервер)."
 ask PROXY_MODE "Режим reverse-proxy (manual/nginx)" "${WA_REC_PROXY_MODE:-manual}"
@@ -39,6 +40,10 @@ ask PROXY_MODE "Режим reverse-proxy (manual/nginx)" "${WA_REC_PROXY_MODE:-m
 [[ "$PORT" =~ ^[0-9]+$ ]] || { echo "Порт должен быть числом"; exit 1; }
 (( 10#$PORT >= 1024 && 10#$PORT <= 65535 )) || { echo "Выберите TCP-порт 1024–65535"; exit 1; }
 PORT="$((10#$PORT))"
+[[ "$EXTERNAL_PORT" =~ ^[0-9]+$ ]] || { echo "Внешний порт должен быть числом"; exit 1; }
+(( 10#$EXTERNAL_PORT >= 1 && 10#$EXTERNAL_PORT <= 65535 )) || { echo "Внешний порт: 1–65535"; exit 1; }
+EXTERNAL_PORT="$((10#$EXTERNAL_PORT))"
+[[ "$EXTERNAL_PORT" != "$PORT" ]] || { echo "Внешний и внутренний порты должны различаться"; exit 1; }
 [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ && "$DOMAIN" == *.* && "$DOMAIN" != -* ]] || { echo "Некорректный домен"; exit 1; }
 [[ "$PROXY_MODE" =~ ^(manual|nginx|nginx-existing|apache-existing|caddy-existing)$ ]] || { echo "Неизвестный режим reverse-proxy"; exit 1; }
 [[ "$APP_DIR" != "$SRC" && "$APP_DIR" != "$SRC/"* && "$SRC" != "$APP_DIR/"* ]] || { echo "Каталог установки не должен совпадать с каталогом исходников"; exit 1; }
@@ -81,6 +86,10 @@ if [[ "$EXISTING" -eq 1 ]]; then
 fi
 
 NGINX_SITE="/etc/nginx/sites-available/$SERVICE.conf"
+# On an existing server, a non-standard public TLS port must be free or already owned by nginx.
+if [[ "$PROXY_MODE" == "apache-existing" || "$PROXY_MODE" == "caddy-existing" ]] && [[ "$EXTERNAL_PORT" != 443 ]]; then
+  echo "Для существующих Apache/Caddy автоматическая интеграция поддерживает внешний 443. Выберите manual для другого порта."; exit 1
+fi
 if [[ "$PROXY_MODE" == "nginx" ]]; then
   if [[ -e "$NGINX_SITE" ]] && ! grep -Fq '# Configured by WhatsApp Translator deploy.sh' "$NGINX_SITE"; then
     echo "Файл Nginx уже используется другим приложением: $NGINX_SITE"; exit 1
@@ -123,7 +132,7 @@ fi
 
 echo
 echo "==== ПЛАН ИЗМЕНЕНИЙ ===="
-printf 'Каталог: %s\nSystemd: %s\nПользователь: %s\nПривязка: 127.0.0.1:%s\nДомен: %s\nРеверс-прокси: %s\n' "$APP_DIR" "$SERVICE" "$APPUSER" "$PORT" "$DOMAIN" "$PROXY_MODE"
+printf 'Каталог: %s\nSystemd: %s\nПользователь: %s\nВнутренний порт: 127.0.0.1:%s\nВнешний HTTPS-порт: %s\nДомен: %s\nРеверс-прокси: %s\n' "$APP_DIR" "$SERVICE" "$APPUSER" "$PORT" "$EXTERNAL_PORT" "$DOMAIN" "$PROXY_MODE"
 echo "Установятся необходимые пакеты/Node.js, приложение и systemd. Файрвол не меняется."
 if [[ "$PROXY_MODE" == *-existing ]]; then
   echo "После установки будет запрошено отдельное подтверждение INTEGRATE."
@@ -307,7 +316,7 @@ install -d -m 750 "$APP_DIR/deploy-examples"
 cat > "$APP_DIR/deploy-examples/nginx-example.conf" <<CONF
 # Пример для ручной настройки существующего Nginx. Нужен действующий HTTPS.
 server {
-    listen 443 ssl;
+    listen $EXTERNAL_PORT ssl;
     server_name $DOMAIN;
     # Укажите пути уже полученного TLS-сертификата.
     ssl_certificate /path/to/fullchain.pem;
@@ -339,16 +348,18 @@ CONF
   systemctl enable --now nginx
   systemctl reload nginx
   certbot certonly --non-interactive --agree-tos --email "$EMAIL" --webroot -w "$ACME_DIR" -d "$DOMAIN" --keep-until-expiring
+  REDIRECT_PORT=""
+  if [[ "$EXTERNAL_PORT" != 443 ]]; then REDIRECT_PORT=":$EXTERNAL_PORT"; fi
   cat > "$NGINX_SITE" <<CONF
 # Configured by WhatsApp Translator deploy.sh
 server {
     listen 80;
     server_name $DOMAIN;
     location ^~ /.well-known/acme-challenge/ { root $ACME_DIR; }
-    location / { return 301 https://\$host\$request_uri; }
+    location / { return 301 https://\$host$REDIRECT_PORT\$request_uri; }
 }
 server {
-    listen 443 ssl;
+    listen $EXTERNAL_PORT ssl;
     server_name $DOMAIN;
     ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
@@ -366,10 +377,10 @@ server {
 CONF
   nginx -t
   systemctl reload nginx
-  echo "Готово: https://$DOMAIN"
+  if [[ "$EXTERNAL_PORT" == 443 ]]; then echo "Готово: https://$DOMAIN"; else echo "Готово: https://$DOMAIN:$EXTERNAL_PORT"; fi
 elif [[ "$PROXY_MODE" == *-existing ]]; then
   echo "Подключаем к уже работающему HTTPS-серверу; все изменения требуют подтверждения."
-  if ! bash "$SRC/integrate-existing.sh" "$PROXY_MODE" "$DOMAIN" "$PORT" "$SERVICE"; then
+  if ! bash "$SRC/integrate-existing.sh" "$PROXY_MODE" "$DOMAIN" "$PORT" "$SERVICE" "$EXTERNAL_PORT"; then
     echo "HTTPS-интеграция не выполнена. Сервис остаётся доступным только локально."
     echo "Ни один существующий сайт не должен оставаться изменённым после ошибки."
     echo "Для ручной конфигурации: $APP_DIR/deploy-examples/nginx-example.conf"
