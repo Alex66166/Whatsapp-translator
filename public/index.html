@@ -40,8 +40,16 @@
     <main class="workspace">
       <aside class="sidebar">
         <div class="filters">
-          <input id="search" type="search" placeholder="Поиск контактов…" aria-label="Поиск контактов">
+          <input id="search" type="search" placeholder="Поиск по загруженным контактам…" aria-label="Поиск по загруженным контактам">
+          <div id="chat-counter" class="chat-counter" aria-live="polite">Загрузка чатов…</div>
           <label class="toggle-label"><input id="only-enabled" type="checkbox"> Только с переводом</label>
+          <form id="add-phone-form" class="add-phone-form">
+            <label for="add-phone">Нет контакта в списке? Введи номер с кодом страны</label>
+            <div class="add-phone-controls">
+              <input id="add-phone" type="tel" inputmode="tel" placeholder="+382 67 123456" autocomplete="tel" aria-label="Номер WhatsApp">
+              <button id="add-phone-btn" class="secondary small" type="submit">Добавить</button>
+            </div>
+          </form>
         </div>
         <div id="chat-list" class="chat-list" role="list"></div>
       </aside>
