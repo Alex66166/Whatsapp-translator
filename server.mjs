@@ -16,6 +16,7 @@ import { retireLinkedAuth } from './lib/auth-session.mjs';
 import { enforceStorageQuota, storageUsage } from './lib/storage-fifo.mjs';
 import { parseVcard } from './lib/vcard.mjs';
 import { RECENT_CHAT_LIMIT, chatMetadataTime, recentChats, historicalChatRef } from './lib/recent-chats.mjs';
+import { incomingMessageState, outgoingMessageText } from './lib/message-policy.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
@@ -283,9 +284,9 @@ function ingest(message) {
   }
   // Save the very first live message even when translation is disabled.
   // Chat discovery and message capture must NOT depend on the checkbox state.
-  const incomingState = translateIncoming && text?.trim() ? 'translating' : 'received-original';
+  const state = incomingMessageState(text, translateIncoming, self);
   const result = stmt.addMsg.run(id, jid, self ? 'out' : 'in', text || '',
-    self ? text || '' : null, self ? 'sent-original' : incomingState, timeMs);
+    self ? text || '' : null, state, timeMs);
   if (!result.changes) return;
   pruneHistory([id]);
   if (image) {
@@ -615,9 +616,9 @@ app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
   emit();
   try {
     // Unchecked "Перевод" means normal WhatsApp messaging, no Groq call.
-    const translated = chat.enabled
-      ? await translate(original, 'Russian', chat.target_language)
-      : original;
+    const translated = await outgoingMessageText(
+      original, !!chat.enabled, chat.target_language, translate
+    );
     stmt.updateMsg.run(translated, 'sending', id);
     emit();
     // This is not safe to retry automatically after interruption.
