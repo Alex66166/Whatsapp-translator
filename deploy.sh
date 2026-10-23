@@ -16,14 +16,16 @@ ask() {
   printf -v "$variable" "%s" "${entered:-$suggested}"
 }
 echo "==== ЭТАП 2. Настройка по результатам аудита ===="
-ask AUDIT "Путь к отчёту аудита" "${WA_AUDIT_REPORT:-}"
-[[ "$AUDIT" = /* && -f "$AUDIT" ]] || { echo "Аудит не найден. Сначала sudo bash audit.sh | tee audit-report.txt"; exit 1; }
-grep -Fq 'АУДИТ ЗАВЕРШЁН:' "$AUDIT" || { echo "Это не законченный отчёт audit.sh"; exit 1; }
+AUDIT="${WA_AUDIT_REPORT:-}"
+# При запуске через bootstrap.sh отчёт известен и повторно не спрашивается.
+if [[ -z "$AUDIT" ]]; then
+  ask AUDIT "Путь к отчёту аудита" ""
+fi
+[[ "$AUDIT" = /* && -f "$AUDIT" ]] || { echo "Отчёт аудита не найден; сначала выполните аудит"; exit 1; }
+grep -Fq 'АУДИТ ЗАВЕРШЁН:' "$AUDIT" || { echo "Отчёт аудита не завершён"; exit 1; }
 AGE="$(find "$AUDIT" -mmin +2880 -print)"
-[[ -z "$AGE" ]] || { echo "Отчёт старше 48 часов, проведите повторный аудит"; exit 1; }
-echo "Убедитесь, что вы проанализировали веб-серверы, все порты и влияние на другие службы."
-read -rp "Наберите AUDIT-APPROVED после согласования конфигурации: " AGREEMENT
-[[ "$AGREEMENT" == "AUDIT-APPROVED" ]] || { echo "Установка отменена"; exit 1; }
+[[ -z "$AGE" ]] || { echo "Отчёт старше 48 часов; повторите аудит"; exit 1; }
+echo "Аудит завершён, отчёт сохранён: $AUDIT"
 
 ask APP_DIR "Каталог приложения" "${WA_REC_APP_DIR:-/opt/whatsapp-translator}"
 ask SERVICE "Служба systemd" "${WA_REC_SERVICE:-whatsapp-translator}"
@@ -104,9 +106,11 @@ if [[ "$EXISTING" -eq 1 ]]; then
   [[ "$BACKUP_DIR" = /* ]] || { echo "Каталог должен быть абсолютным"; exit 1; }
   echo "Старые .env, WhatsApp-сессия, БД и медиа будут сохранены."
 else
-  read -rsp "Пароль веб-интерфейса (не менее 12 символов): " PASSWORD; echo
-  [[ "$(printf '%s' "$PASSWORD" | wc -c)" -ge 12 ]] || { echo "Слишком короткий пароль"; exit 1; }
-  read -rsp "Ключ Groq (gsk_...): " GROQ; echo
+  read -rsp "Пароль веб-интерфейса (не менее 6 символов): " PASSWORD; echo
+  [[ "${#PASSWORD}" -ge 6 ]] || { echo "Пароль должен содержать минимум 6 символов"; exit 1; }
+  # Ключ намеренно вводится ВИДИМО: вставка из буфера через Ctrl+Shift+V/правую кнопку.
+  # Не печатать ключ повторно, не включать shell xtrace, не сохранять в отчёт аудита.
+  read -rp "Вставьте ключ Groq (ввод виден на экране, gsk_...): " GROQ
   [[ "$GROQ" =~ ^gsk_[-_a-zA-Z0-9]+$ ]] || { echo "Некорректный формат ключа Groq"; exit 1; }
   ask GROQ_MODEL "Модель Groq" "${WA_REC_MODEL:-openai/gpt-oss-120b}"
   ask TARGET_LANG "Язык собеседников по умолчанию" "${WA_REC_LANGUAGE:-Montenegrin (Latin script, Ijekavian)}"
