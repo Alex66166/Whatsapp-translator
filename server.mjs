@@ -301,10 +301,19 @@ async function connectWhatsApp() {
       emit();
     });
     sock.ev.on('messages.upsert', data => {
-      if (data.type !== 'notify') return;
       for (const m of data.messages || []) {
-        try { ingest(m); } catch (error) { log.error({ error: error.message }, 'message ingest failed'); }
+        try {
+          if (data.type === 'notify') ingest(m);
+          else {
+            // Append is used for backfilled WhatsApp events; discover the
+            // conversation without importing/retranslating historical bodies.
+            const jid = m?.key?.remoteJid;
+            if (validChat(jid) && !m.key.participant)
+              touch(jid, !m.key.fromMe ? m.pushName || '' : '', 0);
+          }
+        } catch (error) { log.error({ error: error.message }, 'message ingest failed'); }
       }
+      emit();
     });
     sock.ev.on('connection.update', async update => {
       if (myGeneration !== generation) return;
