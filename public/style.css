@@ -25,7 +25,7 @@ input[type=checkbox]{accent-color:#128468;width:17px;height:17px}.chat-list{over
 .chat-title{display:flex;flex-direction:column;min-width:0}.chat-title strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chat-title small{color:#89948f;font-size:10px;overflow:hidden;text-overflow:ellipsis}
 .langbar{background:#f8faf9;padding:8px 18px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e1e8e5}
-.langbar label{font-size:12px;white-space:nowrap;color:#56655f}.langbar input{flex:1;min-width:40px;padding:8px;font-size:13px}
+.langbar label{font-size:12px;white-space:nowrap;color:#56655f}.langbar select{flex:1;min-width:40px;padding:8px;font-size:13px;border:1px solid #cbdad6;border-radius:9px;background:white;color:inherit}
 .messages{overflow-y:auto;flex:1;min-height:0;padding:18px;display:flex;flex-direction:column;align-items:stretch;gap:11px}
 .bubble{max-width:min(86%,590px);padding:12px 14px;border-radius:12px;box-shadow:0 1px 4px #0000000d}
 .bubble.in{align-self:flex-start;background:white}.bubble.out{align-self:flex-end;background:#d7f6e1}
