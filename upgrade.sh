@@ -22,6 +22,28 @@ SERVICE_USER="$(systemctl show "$SERVICE.service" -p User --value)"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 PORT="$(sed -n 's/^PORT=//p' "$APP_DIR/.env" | tail -n 1)"
 [[ "$PORT" =~ ^[0-9]+$ ]] || { echo "Неверный порт приложения"; exit 1; }
+NGINX_SITE="/etc/nginx/sites-available/$SERVICE.conf"
+NGINX_OWNED=0
+CURRENT_PUBLIC_PORT=443
+if [[ -f "$NGINX_SITE" ]] && grep -Fq '# Configured by WhatsApp Translator deploy.sh' "$NGINX_SITE"; then
+  NGINX_OWNED=1
+  CURRENT_PUBLIC_PORT="$(sed -nE 's/^[[:space:]]*listen[[:space:]]+([0-9]+)[[:space:]]+ssl;.*/\1/p' "$NGINX_SITE" | head -n 1)"
+  [[ "$CURRENT_PUBLIC_PORT" =~ ^[0-9]+$ ]] || { echo "Не удалось определить внешний порт Nginx"; exit 1; }
+fi
+read -rp "Внешний HTTPS-порт [$CURRENT_PUBLIC_PORT]: " NEW_PUBLIC_PORT
+NEW_PUBLIC_PORT="${NEW_PUBLIC_PORT:-$CURRENT_PUBLIC_PORT}"
+[[ "$NEW_PUBLIC_PORT" =~ ^[0-9]+$ ]] || { echo "Неверный внешний порт"; exit 1; }
+(( 10#$NEW_PUBLIC_PORT > 0 && 10#$NEW_PUBLIC_PORT < 65536 )) || { echo "Порт 1–65535"; exit 1; }
+NEW_PUBLIC_PORT="$((10#$NEW_PUBLIC_PORT))"
+[[ "$NEW_PUBLIC_PORT" != "$PORT" ]] || { echo "Внешний и внутренний порты не должны совпадать"; exit 1; }
+if [[ "$NEW_PUBLIC_PORT" != "$CURRENT_PUBLIC_PORT" ]]; then
+  [[ "$NGINX_OWNED" -eq 1 ]] || { echo "Автосмена внешнего порта работает только для vhost Nginx установщика"; exit 1; }
+  LISTENERS="$(ss -H -ltnp "( sport = :$NEW_PUBLIC_PORT )" || :)"
+  if [[ -n "$LISTENERS" ]] && printf '%s\n' "$LISTENERS" | grep -v '"nginx"' | grep -q .; then
+    echo "Новый внешний порт занят другим процессом"; exit 1
+  fi
+  echo "Внешний HTTPS-порт будет изменён на $NEW_PUBLIC_PORT (для доступа откройте TCP-порт в файрволе)."
+fi
 
 WORK="$(mktemp -d /root/wa-upgrade.XXXXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
@@ -41,6 +63,7 @@ node --check "$WORK/source/lib/translate.mjs"
 OLD_DEPS="$(node -e 'console.log(JSON.stringify(require(process.argv[1]).dependencies))' "$APP_DIR/package.json")"
 NEW_DEPS="$(node -e 'console.log(JSON.stringify(require(process.argv[1]).dependencies))' "$WORK/source/package.json")"
 rsync -a --exclude='.env' --exclude='.data/' --exclude='node_modules/' "$APP_DIR/" "$WORK/previous/"
+if [[ "$NGINX_OWNED" -eq 1 ]]; then cp -a "$NGINX_SITE" "$WORK/nginx.conf"; fi
 WAS_ACTIVE=0
 if systemctl is-active --quiet "$SERVICE.service"; then WAS_ACTIVE=1; fi
 CHANGED=0
@@ -52,6 +75,10 @@ rollback() {
     echo "Обновление не прошло: восстанавливаем прежний код." >&2
     rsync -a --delete --exclude='.env' --exclude='.data/' --exclude='node_modules/' \
       "$WORK/previous/" "$APP_DIR/" || :
+    if [[ -f "$WORK/nginx.conf" ]]; then
+      cp -a "$WORK/nginx.conf" "$NGINX_SITE" || :
+      if command -v nginx >/dev/null 2>&1; then nginx -t && systemctl reload nginx || :; fi
+    fi
     if [[ "$WAS_ACTIVE" -eq 1 ]]; then systemctl restart "$SERVICE.service" || :; fi
     echo "Настройки, сессия WhatsApp, база, фотографии и сертификаты не удалялись." >&2
   fi
@@ -71,6 +98,23 @@ fi
 runuser -u "$SERVICE_USER" -- env HOME="$APP_DIR" sh -c \
   'cd "$1" && npm run check' sh "$APP_DIR"
 systemctl start "$SERVICE.service"
+if [[ "$NEW_PUBLIC_PORT" != "$CURRENT_PUBLIC_PORT" ]]; then
+  python3 - "$NGINX_SITE" "$CURRENT_PUBLIC_PORT" "$NEW_PUBLIC_PORT" <<'PY'
+import pathlib,re,sys
+site=pathlib.Path(sys.argv[1])
+old,new=sys.argv[2:]
+data=site.read_text()
+pattern=r'(?m)^(\s*listen\s+)'+re.escape(old)+r'(\s+ssl;)'
+modified,count=re.subn(pattern,lambda m:m.group(1)+new+m.group(2),data,count=1)
+if count!=1: raise SystemExit("Не найден SSL listen для безопасного изменения")
+port_suffix='' if new=='443' else ':'+new
+modified,n=re.subn(r'(return 301 https://\\$host)(?::[0-9]+)?(\\$request_uri;)',lambda m:m.group(1)+port_suffix+m.group(2),modified)
+if n!=1: raise SystemExit("Не найден редирект для безопасного изменения")
+site.write_text(modified)
+PY
+  nginx -t
+  systemctl reload nginx
+fi
 for count in 1 2 3 4 5 6 7 8 9 10; do
   if systemctl is-active --quiet "$SERVICE.service" &&
     curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
@@ -80,4 +124,8 @@ for count in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
 done
 [[ "$OK" -eq 1 ]] || { echo "Приложение не прошло проверку HTTP"; exit 1; }
-echo "Обновлено. Открой прежний HTTPS-адрес и обнови страницу Ctrl+F5."
+if [[ "$NEW_PUBLIC_PORT" -eq 443 ]]; then
+  echo "Обновлено. Открой прежний HTTPS-домен и обнови страницу Ctrl+F5."
+else
+  echo "Обновлено. Новый внешний HTTPS-порт: $NEW_PUBLIC_PORT (https://ваш-домен:$NEW_PUBLIC_PORT)."
+fi
