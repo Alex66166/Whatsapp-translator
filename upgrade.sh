@@ -3,6 +3,11 @@
 set -Eeuo pipefail
 umask 077
 [[ "$(id -u)" -eq 0 ]] || { echo "Запускайте через sudo bash"; exit 1; }
+RESET_CONTACTS=0
+if [[ "${1:-}" == "--reset-contacts" ]]; then
+  RESET_CONTACTS=1
+  shift
+fi
 APP_DIR="/opt/whatsapp-translator"
 SERVICE="whatsapp-translator"
 if [[ $# -ge 1 ]]; then APP_DIR="$1"; fi
@@ -116,6 +121,10 @@ for count in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
 done
 [[ "$OK" -eq 1 ]] || { echo "Приложение не прошло проверку HTTP"; exit 1; }
+if [[ "$RESET_CONTACTS" -eq 1 ]]; then
+  echo "Применяем однократный сброс старого кэша контактов..."
+  bash "$APP_DIR/reset-contacts.sh" "$APP_DIR" "$SERVICE"
+fi
 if [[ "$NEW_PUBLIC_PORT" -eq 443 ]]; then
   echo "Обновлено. Открой прежний HTTPS-домен и обнови страницу Ctrl+F5."
 else
