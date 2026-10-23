@@ -58,6 +58,11 @@ function setStatus(data) {
   $('pairing-details').textContent = data.qr
     ? 'В телефоне: WhatsApp → Связанные устройства → Привязка устройства → сканировать QR.'
     : 'Дождитесь QR-кода. Если соединение потеряно, используйте кнопку повторного подключения.';
+  if (Number.isFinite(data.storageUsedBytes) && Number.isFinite(data.storageMaxBytes)) {
+    $('storage-status').textContent = 'Хранилище: ' +
+      (data.storageUsedBytes / 1048576).toFixed(1) + ' / ' +
+      (data.storageMaxBytes / 1048576).toFixed(0) + ' МБ';
+  }
   if (!data.groqConfigured) notification('Groq API-ключ не настроен на сервере: переводы не будут работать.');
   updateComposer();
 }
