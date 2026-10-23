@@ -36,6 +36,7 @@ NEW_PUBLIC_PORT="${NEW_PUBLIC_PORT:-$CURRENT_PUBLIC_PORT}"
 (( 10#$NEW_PUBLIC_PORT > 0 && 10#$NEW_PUBLIC_PORT < 65536 )) || { echo "Порт 1–65535"; exit 1; }
 NEW_PUBLIC_PORT="$((10#$NEW_PUBLIC_PORT))"
 [[ "$NEW_PUBLIC_PORT" != "$PORT" ]] || { echo "Внешний и внутренний порты не должны совпадать"; exit 1; }
+[[ "$NEW_PUBLIC_PORT" != 80 ]] || { echo "Внешний HTTPS-порт 80 занят HTTP/ACME"; exit 1; }
 if [[ "$NEW_PUBLIC_PORT" != "$CURRENT_PUBLIC_PORT" ]]; then
   [[ "$NGINX_OWNED" -eq 1 ]] || { echo "Автосмена внешнего порта работает только для vhost Nginx установщика"; exit 1; }
   LISTENERS="$(ss -H -ltnp "( sport = :$NEW_PUBLIC_PORT )" || :)"
@@ -98,7 +99,8 @@ fi
 runuser -u "$SERVICE_USER" -- env HOME="$APP_DIR" sh -c \
   'cd "$1" && npm run check' sh "$APP_DIR"
 systemctl start "$SERVICE.service"
-if [[ "$NEW_PUBLIC_PORT" != "$CURRENT_PUBLIC_PORT" ]]; then
+if [[ "$NGINX_OWNED" -eq 1 ]] &&
+   { [[ "$NEW_PUBLIC_PORT" != "$CURRENT_PUBLIC_PORT" ]] || grep -Fq 'client_max_body_size 32k;' "$NGINX_SITE"; }; then
   python3 - "$NGINX_SITE" "$CURRENT_PUBLIC_PORT" "$NEW_PUBLIC_PORT" <<'PY'
 import pathlib,re,sys
 site=pathlib.Path(sys.argv[1])
@@ -107,6 +109,8 @@ data=site.read_text()
 pattern=r'(?m)^(\s*listen\s+)'+re.escape(old)+r'(\s+ssl;)'
 modified,count=re.subn(pattern,lambda m:m.group(1)+new+m.group(2),data,count=1)
 if count!=1: raise SystemExit("Не найден SSL listen для безопасного изменения")
+# The new 2 MB vCard import needs room at the nginx layer too.
+modified=modified.replace('client_max_body_size 32k;','client_max_body_size 3m;')
 port_suffix='' if new=='443' else ':'+new
 modified,n=re.subn(r'(return 301 https://\\$host)(?::[0-9]+)?(\\$request_uri;)',lambda m:m.group(1)+port_suffix+m.group(2),modified)
 if n!=1: raise SystemExit("Не найден редирект для безопасного изменения")
