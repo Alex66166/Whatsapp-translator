@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { translate } from './lib/translate.mjs';
 import { migrateMessages, bindWhatsAppAck } from './lib/message-ledger.mjs';
 import { retireLinkedAuth } from './lib/auth-session.mjs';
+import { enforceStorageQuota, storageUsage } from './lib/storage-fifo.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
@@ -21,7 +22,19 @@ mkdirSync(DATA, { recursive: true, mode: 0o700 });
 const MEDIA_DIR = path.join(DATA, 'media');
 mkdirSync(MEDIA_DIR, { recursive: true, mode: 0o700 });
 const MEDIA_MAX_BYTES = Math.min(32, Math.max(1, Number(process.env.MEDIA_MAX_MB || 8))) * 1048576;
-const MEDIA_TOTAL_BYTES = Math.max(10, Number(process.env.MEDIA_TOTAL_MB || 512)) * 1048576;
+// Historical MEDIA_TOTAL_MB configurations remain supported after upgrading.
+const STORAGE_TOTAL_BYTES = Math.max(16, Number(process.env.STORAGE_TOTAL_MB || process.env.MEDIA_TOTAL_MB || 512)) * 1048576;
+function pruneHistory(protectedIds = [], extraBytes = 0) {
+  try {
+    const status = enforceStorageQuota(db, MEDIA_DIR, STORAGE_TOTAL_BYTES,
+      { protectedIds, extraBytes });
+    if (status.removed) emit();
+    return status;
+  } catch (error) {
+    log.error({ error: error.message }, 'Storage FIFO cleanup failed');
+    return { overLimit: true, removed: 0 };
+  }
+}
 const db = new Database(path.join(DATA, 'messages.sqlite'));
 db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 5000');
@@ -138,9 +151,7 @@ async function drainPictures() {
         if (!allowedMimes.has(mime)) throw new Error('Unsupported image MIME');
         if (reported && reported > MEDIA_MAX_BYTES) throw new Error('Image exceeds size limit');
         if (!wa) throw new Error('WhatsApp is disconnected');
-        const remaining = MEDIA_TOTAL_BYTES - stmt.mediaUsage.get().bytes;
-        if (remaining <= 0) throw new Error('Image storage quota reached');
-        const maxBytes = Math.min(MEDIA_MAX_BYTES, remaining);
+        const maxBytes = MEDIA_MAX_BYTES;
         const file = path.join(MEDIA_DIR, createHash('sha256').update(id).digest('hex') + '.image');
         let downloaded = 0;
         try {
@@ -159,6 +170,14 @@ async function drainPictures() {
           await pipeline(stream, limiter, createWriteStream(file, { flags: 'wx', mode: 0o600 }));
           if (!downloaded) throw new Error('Empty image');
           stmt.mediaState.run('ready', mime, downloaded, id);
+          // Images and SQLite text share the same FIFO quota; current image stays
+          // protected and older completed entries are evicted first.
+          const quota = pruneHistory([id]);
+          if (quota.overLimit) {
+            unlinkSync(file);
+            stmt.mediaState.run('error', null, null, id);
+            log.warn('Current image cannot fit the allocated history quota');
+          }
         } catch (error) {
           if (existsSync(file)) unlinkSync(file);
           throw error;
@@ -185,6 +204,7 @@ async function runQueue() {
         const language = job.source_language || DEFAULT_LANGUAGE;
         const translated = await translate(job.original, language, 'Russian');
         stmt.updateMsg.run(translated, 'ready', job.id);
+        pruneHistory([job.id]);
       } catch (error) {
         log.warn({ error: error.message }, 'Translation failed');
         stmt.updateMsg.run(null, 'error', job.id);
@@ -242,6 +262,7 @@ function ingest(message) {
   const result = stmt.addMsg.run(id, jid, self ? 'out' : 'in', text || '',
     self ? text || '' : null, self ? 'sent-original' : text ? 'translating' : 'ready', timeMs);
   if (!result.changes) return;
+  pruneHistory([id]);
   if (image) {
     stmt.mediaState.run('loading', null, null, id);
     queueImage(id, message, image);
@@ -416,7 +437,9 @@ app.post('/api/logout', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/status', requireAuth, (req, res) => {
-  res.json({ connection, qr: qrImage, groqConfigured: !!process.env.GROQ_API_KEY });
+  const used = storageUsage(db, MEDIA_DIR).bytes;
+  res.json({ connection, qr: qrImage, groqConfigured: !!process.env.GROQ_API_KEY,
+    storageUsedBytes: used, storageMaxBytes: STORAGE_TOTAL_BYTES });
 });
 app.post('/api/relink', requireAuth, (req, res) => {
   if (connection !== 'logged_out') return res.status(409).json({ error: 'Re-linking is only available after WhatsApp logged out' });
@@ -507,6 +530,7 @@ app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
   const existing = stmt.msg.get(id);
   if (existing) return res.status(409).json({ error: 'This request was already processed; check the chat before retrying' });
   stmt.addMsg.run(id, jid, 'out', original, null, 'translating', Date.now());
+  pruneHistory([id]);
   emit();
   try {
     const translated = await translate(original, 'Russian', chat.target_language);
@@ -518,11 +542,13 @@ app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
     if (!sent?.key?.id) throw new Error('WhatsApp did not confirm message submission');
     bindOutgoingWaId(id, jid, sent.key.id);
     stmt.stateMsg.run('sent', id);
+    pruneHistory([id]);
     emit();
     return res.json({ ok: true, translated });
   } catch (error) {
     log.warn({ error: error.message }, 'Outgoing message failed');
     stmt.stateMsg.run('error', id);
+    pruneHistory([id]);
     emit();
     return res.status(502).json({ error: 'Not sent or status uncertain: ' + error.message + '. Check the chat before trying again.' });
   }
@@ -569,6 +595,7 @@ const PORT = Number(process.env.PORT || 3080);
 const HOST = process.env.HOST || '127.0.0.1';
 app.listen(PORT, HOST, () => {
   console.log('WhatsApp Translator listening on ' + HOST + ':' + PORT);
+  pruneHistory();
   void connectWhatsApp();
   void runQueue();
 });
