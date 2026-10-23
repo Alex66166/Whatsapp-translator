@@ -46,7 +46,9 @@ function setStatus(data) {
     logged_out: '○ Нужна привязка',
     error: '○ Ошибка соединения'
   };
-  $('connection').textContent = labels[state.status] || state.status;
+  const reason = Number.isInteger(data.disconnectCode) ? ' · код ' + data.disconnectCode : '';
+  $('connection').textContent = (labels[state.status] || state.status) +
+    (state.status === 'disconnected' ? reason : '');
   $('connection').classList.toggle('online', state.status === 'connected');
   $('pairing').hidden = state.status === 'connected';
   $('qr').hidden = !data.qr;
