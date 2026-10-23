@@ -257,7 +257,7 @@ function ingest(message) {
   if (pushName && !message.key.fromMe) people.set(jid, pushName);
   touch(jid, pushName && !message.key.fromMe ? pushName : '', timeMs);
   const chat = stmt.chat.get(jid);
-  if (!chat?.enabled) { emit(); return; }
+  const translateIncoming = !!chat?.enabled;
   const id = jid + '|' + message.key.id;
   const self = !!message.key.fromMe;
   if (self) {
@@ -275,8 +275,11 @@ function ingest(message) {
       return;
     }
   }
+  // Save the very first live message even when translation is disabled.
+  // Chat discovery and message capture must NOT depend on the checkbox state.
+  const incomingState = translateIncoming && text?.trim() ? 'translating' : 'received-original';
   const result = stmt.addMsg.run(id, jid, self ? 'out' : 'in', text || '',
-    self ? text || '' : null, self ? 'sent-original' : text ? 'translating' : 'ready', timeMs);
+    self ? text || '' : null, self ? 'sent-original' : incomingState, timeMs);
   if (!result.changes) return;
   pruneHistory([id]);
   if (image) {
@@ -285,7 +288,7 @@ function ingest(message) {
   }
   emit();
   if (self) stmt.claimWa.run(message.key.id, id);
-  if (!self && text?.trim()) queueIncoming(id, text, chat.target_language);
+  if (!self && translateIncoming && text?.trim()) queueIncoming(id, text, chat.target_language);
 }
 function scheduleReconnect(delayMs = 7000) {
   if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -574,7 +577,6 @@ app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
   const chat = stmt.chat.get(jid);
   const original = req.body?.text;
   if (!validChat(jid) || !chat) return res.status(404).json({ error: 'Chat not found' });
-  if (!chat.enabled) return res.status(409).json({ error: 'Enable translation for this chat first' });
   if (typeof original !== 'string' || !original.trim() || original.length > 4000)
     return res.status(400).json({ error: 'Message must contain 1–4000 characters' });
   if (connection !== 'connected' || !wa) return res.status(503).json({ error: 'WhatsApp is disconnected' });
@@ -588,7 +590,10 @@ app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
   pruneHistory([id]);
   emit();
   try {
-    const translated = await translate(original, 'Russian', chat.target_language);
+    // Unchecked "Перевод" means normal WhatsApp messaging, no Groq call.
+    const translated = chat.enabled
+      ? await translate(original, 'Russian', chat.target_language)
+      : original;
     stmt.updateMsg.run(translated, 'sending', id);
     emit();
     // This is not safe to retry automatically after interruption.
@@ -599,7 +604,7 @@ app.post('/api/chats/:jid/send', requireAuth, async (req, res) => {
     stmt.stateMsg.run('sent', id);
     pruneHistory([id]);
     emit();
-    return res.json({ ok: true, translated });
+    return res.json({ ok: true, translated: chat.enabled ? translated : null });
   } catch (error) {
     log.warn({ error: error.message }, 'Outgoing message failed');
     stmt.stateMsg.run('error', id);
