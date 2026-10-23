@@ -102,14 +102,13 @@ function touch(jid, name, timestamp = 0) {
     stmt.title.run(label, jid);
   }
 }
-function updateContact(contact) {
+function updateContact(contact, selected = new Set(recentChats(db).map(chat => chat.jid))) {
   if (!contact) return;
   const name = [contact.name, contact.verifiedName, contact.notify]
     .find(n => typeof n === 'string' && n.trim())?.trim();
   if (!name) return;
   // Contact events are NOT a chat list: do not create conversations for all
   // address-book entries. Enrich only the actual 20 most recent chats.
-  const selected = new Set(recentChats(db).map(chat => chat.jid));
   const ids = [contact.id, contact.lid, contact.phoneNumber];
   for (const jid of ids) {
     if (!validChat(jid) || !selected.has(jid)) continue;
@@ -325,11 +324,13 @@ async function connectWhatsApp() {
       });
     });
     sock.ev.on('contacts.upsert', items => {
-      for (const item of items) updateContact(item);
+      const recent = new Set(recentChats(db).map(chat => chat.jid));
+      for (const item of items) updateContact(item, recent);
       emit();
     });
     sock.ev.on('contacts.update', items => {
-      for (const item of items) updateContact(item);
+      const recent = new Set(recentChats(db).map(chat => chat.jid));
+      for (const item of items) updateContact(item, recent);
       emit();
     });
     sock.ev.on('chats.upsert', items => {
@@ -346,7 +347,8 @@ async function connectWhatsApp() {
       // inspect, save, translate, or download historical message bodies.
       // Only read chat timestamps and names for the 20 most recent contacts.
       for (const chat of data.chats || []) updateChatMetadata(chat);
-      for (const person of data.contacts || []) updateContact(person);
+      const recent = new Set(recentChats(db).map(chat => chat.jid));
+      for (const person of data.contacts || []) updateContact(person, recent);
       log.info({ chatMetadata: (data.chats || []).length,
         recent: recentChats(db).length }, 'Recent WhatsApp chat metadata received');
       emit();
