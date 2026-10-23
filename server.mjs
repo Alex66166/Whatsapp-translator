@@ -48,6 +48,8 @@ db.exec([
   'CREATE TABLE IF NOT EXISTS phonebook (phone TEXT PRIMARY KEY, name TEXT NOT NULL)'
 ].join(';') + ';');
 migrateMessages(db);
+const chatColumns = new Set(db.prepare('PRAGMA table_info(chats)').all().map(c => c.name));
+if (!chatColumns.has('name_rank')) db.exec('ALTER TABLE chats ADD COLUMN name_rank INTEGER NOT NULL DEFAULT 0');
 
 const stmt = {
   chat: db.prepare('SELECT * FROM chats WHERE jid = ?'),
@@ -55,7 +57,7 @@ const stmt = {
   imported: db.prepare('SELECT phone,name FROM phonebook ORDER BY name COLLATE NOCASE'),
   importContact: db.prepare('INSERT INTO phonebook(phone,name) VALUES(?,?) ON CONFLICT(phone) DO UPDATE SET name=excluded.name'),
   addChat: db.prepare('INSERT INTO chats(jid,title,target_language,last_activity) VALUES(?,?,?,?) ON CONFLICT(jid) DO UPDATE SET last_activity=MAX(chats.last_activity,excluded.last_activity)'),
-  title: db.prepare('UPDATE chats SET title=? WHERE jid=?'),
+  title: db.prepare('UPDATE chats SET title=?, name_rank=? WHERE jid=?'),
   setting: db.prepare('UPDATE chats SET enabled=?, target_language=? WHERE jid=?'),
   messages: db.prepare('SELECT * FROM (SELECT * FROM messages WHERE jid=? ORDER BY created_at DESC LIMIT 150) ORDER BY created_at ASC'),
   addMsg: db.prepare('INSERT OR IGNORE INTO messages(id,jid,direction,original,translated,state,created_at) VALUES(?,?,?,?,?,?,?)'),
@@ -93,34 +95,43 @@ function validChat(jid) {
     (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid'));
 }
 function shortJid(jid) { return jid.split('@')[0] || jid; }
-function touch(jid, name, timestamp = 0) {
-  if (!validChat(jid)) return;
-  const supplied = typeof name === 'string' && name.trim() ? name.trim().slice(0,160) : '';
-  const label = supplied || people.get(jid) || shortJid(jid);
-  const existing = stmt.chat.get(jid);
-  stmt.addChat.run(jid, label, DEFAULT_LANGUAGE, timestamp);
-  // A short remote push name ("A") is not a saved phonebook name. Never
-  // replace an existing longer contact name with a less informative label.
-  if (!existing || (supplied && (existing.title === shortJid(jid) ||
-      supplied.length > existing.title.length || existing.title === supplied))) {
-    stmt.title.run(label, jid);
+function setContactLabel(jid, name, rank=1) {
+  if (!validChat(jid) || typeof name !== 'string' || !name.trim()) return;
+  const label = name.trim().slice(0,160);
+  const old = stmt.chat.get(jid);
+  if (!old) return;
+  const currentRank = Number(old.name_rank) || 0;
+  // Saved phonebook names outrank verified business names, which outrank
+  // WhatsApp push names. Equal-ranked shorter labels never replace longer ones.
+  if (rank > currentRank ||
+      (rank === currentRank && label.length > old.title.length) ||
+      old.title === shortJid(jid)) {
+    stmt.title.run(label, rank, jid);
   }
 }
+
+function touch(jid, name, timestamp = 0) {
+  if (!validChat(jid)) return;
+  const label = typeof name === 'string' && name.trim() ? name.trim().slice(0,160) : people.get(jid) || shortJid(jid);
+  stmt.addChat.run(jid, label, DEFAULT_LANGUAGE, timestamp);
+  if (typeof name === 'string' && name.trim()) setContactLabel(jid, name, 1);
+}
+
 function updateContact(contact, selected = new Set(recentChats(db).map(chat => chat.jid))) {
   if (!contact) return;
-  const name = [contact.name, contact.verifiedName, contact.notify]
-    .find(n => typeof n === 'string' && n.trim())?.trim();
-  if (!name) return;
-  // Contact events are NOT a chat list: do not create conversations for all
-  // address-book entries. Enrich only the actual 20 most recent chats.
+  const ranked = [
+    [contact.name, 3],
+    [contact.verifiedName, 2],
+    [contact.notify, 1]
+  ];
+  const match = ranked.find(([name]) => typeof name === 'string' && name.trim());
+  if (!match) return;
+  const [name, rank] = match;
   const ids = [contact.id, contact.lid, contact.phoneNumber];
   for (const jid of ids) {
     if (!validChat(jid) || !selected.has(jid)) continue;
-    const existing = stmt.chat.get(jid);
-    if (existing && (existing.title === shortJid(jid) || name.length >= existing.title.length)) {
-      people.set(jid, name);
-      stmt.title.run(name, jid);
-    }
+    people.set(jid, name);
+    setContactLabel(jid, name, rank);
   }
 }
 function updateChatMetadata(chat) {
@@ -548,7 +559,7 @@ app.post('/api/contacts/import', requireAuth,
           stmt.importContact.run(phone, name);
           const jid = phone + '@s.whatsapp.net';
           people.set(jid, name);
-          if (stmt.chat.get(jid)) stmt.title.run(name, jid);
+          if (stmt.chat.get(jid)) setContactLabel(jid, name, 3);
         }
       })();
       emit();
