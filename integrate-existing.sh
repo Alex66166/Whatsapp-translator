@@ -132,7 +132,7 @@ server {
   ssl_certificate $CERT;
   ssl_certificate_key $KEY;
   ssl_protocols TLSv1.2 TLSv1.3;
-  client_max_body_size 32k;
+  client_max_body_size 3m;
   location / {
     proxy_pass http://127.0.0.1:$PORT;
     proxy_http_version 1.1;
