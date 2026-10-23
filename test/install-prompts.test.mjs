@@ -27,6 +27,15 @@ test('web password has a six-character minimum and no additional complexity rule
   assert.doesNotMatch(script, /не менее 12 символов/);
 });
 
+test('HTTPS external port is a separate installer choice from local Node port', () => {
+  const deploy=read('deploy.sh');
+  const bootstrap=read('bootstrap.sh');
+  assert.match(deploy, /ask EXTERNAL_PORT "Внешний порт HTTPS/);
+  assert.match(deploy, /listen \\$EXTERNAL_PORT ssl;/);
+  assert.match(deploy, /Внешний и внутренний порты должны различаться/);
+  assert.match(bootstrap, /WA_REC_EXTERNAL_PORT/);
+});
+
 test('Groq key uses visible interactive terminal read, retaining key validation', () => {
   const script=read('deploy.sh');
   assert.match(script, /read -rp "Вставьте ключ Groq \(ввод виден на экране, gsk_\.\.\.\): " GROQ/);
