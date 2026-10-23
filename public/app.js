@@ -134,13 +134,14 @@ function renderHeader() {
 }
 function updateComposer() {
   const c = currentChat();
-  const allow = !!c?.enabled && state.status === 'connected' && !state.busy;
-  $('draft').disabled = !allow;
-  $('send').disabled = !allow || !$('draft').value.trim();
-  $('compose-state').textContent = !c?.enabled ? 'Для этого чата перевод отключён'
-    : state.status !== 'connected' ? 'WhatsApp не подключён'
-    : state.busy ? 'Перевод и отправка…'
-    : 'Сообщение будет переведено автоматически';
+  const canWrite = !!c && state.status === 'connected' && !state.busy;
+  $('draft').disabled = !canWrite;
+  $('send').disabled = !canWrite || !$('draft').value.trim();
+  $('send').textContent = c?.enabled ? 'Перевести и отправить ➤' : 'Отправить без перевода ➤';
+  $('compose-state').textContent = state.status !== 'connected' ? 'WhatsApp не подключён'
+    : state.busy ? (c?.enabled ? 'Перевод и отправка…' : 'Отправка…')
+    : c?.enabled ? 'Сообщение будет переведено автоматически'
+    : 'Перевод выключен: сообщение отправится без изменений';
 }
 function renderMessages(messages) {
   const list = $('messages');
@@ -276,7 +277,7 @@ $('compose').addEventListener('submit', async e => {
   e.preventDefault();
   const c = currentChat();
   const text = $('draft').value.trim();
-  if (!c?.enabled || !text || state.busy) return;
+  if (!c || !text || state.busy || state.status !== 'connected') return;
   state.busy = true;
   updateComposer();
   const requestId = crypto.randomUUID();
