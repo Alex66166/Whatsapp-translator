@@ -4,11 +4,12 @@
 set -Eeuo pipefail
 umask 077
 [[ "$(id -u)" -eq 0 ]] || { echo "Требуются права root"; exit 1; }
-[[ "$#" -eq 4 ]] || { echo "Аргументы: тип_сервера домен порт имя_службы"; exit 1; }
-TYPE="$1"; DOMAIN="$2"; PORT="$3"; SERVICE="$4"
+[[ "$#" -eq 5 ]] || { echo "Аргументы: тип_сервера домен локальный_порт имя_службы внешний_порт"; exit 1; }
+TYPE="$1"; DOMAIN="$2"; PORT="$3"; SERVICE="$4"; EXTERNAL_PORT="$5"
 [[ "$TYPE" =~ ^(nginx-existing|apache-existing|caddy-existing)$ ]] || exit 1
 [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ && "$DOMAIN" == *.* ]] || exit 1
-[[ "$PORT" =~ ^[0-9]+$ && "$SERVICE" =~ ^[a-zA-Z0-9_-]+$ ]] || exit 1
+[[ "$PORT" =~ ^[0-9]+$ && "$SERVICE" =~ ^[a-zA-Z0-9_-]+$ && "$EXTERNAL_PORT" =~ ^[0-9]+$ ]] || exit 1
+(( EXTERNAL_PORT >= 1 && EXTERNAL_PORT <= 65535 )) || exit 1
 command -v openssl >/dev/null || { echo "openssl отсутствует"; exit 1; }
 
 # Запоминаем оригинал изменяемого файла ВНЕ директории веб-сервера.
@@ -126,7 +127,7 @@ case "$TYPE" in
     cat > "$FILE" <<CONF
 # WhatsApp Translator: отдельный сайт, существующие конфигурации не меняются
 server {
-  listen 443 ssl;
+  listen $EXTERNAL_PORT ssl;
   server_name $DOMAIN;
   ssl_certificate $CERT;
   ssl_certificate_key $KEY;
@@ -170,7 +171,7 @@ CONF
     CHANGED=1
     cat > "$FILE" <<CONF
 # WhatsApp Translator: отдельный VirtualHost
-<VirtualHost *:443>
+<VirtualHost *:$EXTERNAL_PORT>
   ServerName $DOMAIN
   SSLEngine on
   SSLCertificateFile "$CERT"
@@ -221,5 +222,5 @@ CONF
     ;;
 esac
 COMPLETED=1
-echo "ИНТЕГРАЦИЯ ЗАВЕРШЕНА: https://$DOMAIN"
+if [[ "$EXTERNAL_PORT" == 443 ]]; then echo "ИНТЕГРАЦИЯ ЗАВЕРШЕНА: https://$DOMAIN"; else echo "ИНТЕГРАЦИЯ ЗАВЕРШЕНА: https://$DOMAIN:$EXTERNAL_PORT"; fi
 echo "Существующие сайты не редактировались. Сделайте запрос к веб-клиенту и проверьте сертификат снаружи."
