@@ -110,7 +110,19 @@ function renderHeader() {
   $('chat-name').textContent = c.title;
   $('chat-jid').textContent = c.jid;
   $('enable-chat').checked = c.enabled;
-  if (document.activeElement !== $('target-language')) $('target-language').value = c.targetLanguage;
+  const languageSelect = $('target-language');
+  if (document.activeElement !== languageSelect) {
+    // Keep a legacy/custom language selectable after upgrading from free-text input.
+    for (const item of [...languageSelect.options]) {
+      if (item.dataset.custom === 'true') item.remove();
+    }
+    if (![...languageSelect.options].some(option => option.value === c.targetLanguage)) {
+      const custom = new Option(c.targetLanguage + ' (сохранённый язык)', c.targetLanguage);
+      custom.dataset.custom = 'true';
+      languageSelect.add(custom);
+    }
+    languageSelect.value = c.targetLanguage;
+  }
   updateComposer();
 }
 function updateComposer() {
