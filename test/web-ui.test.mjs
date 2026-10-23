@@ -23,6 +23,10 @@ test('Web UI discovers chats dynamically, switches contacts, and keeps recipient
     calls.push({endpoint,opts});
     if (endpoint==='/api/status') return response({connection:'connected',qr:null,groqConfigured:true});
     if (endpoint==='/api/chats') return response(chats);
+    if (endpoint==='/api/chats/by-phone') {
+      chats.push({jid:'38267123456@s.whatsapp.net',title:'38267123456',enabled:false,targetLanguage:'Montenegrin (Latin script, Ijekavian)',lastActivity:0});
+      return response({jid:'38267123456@s.whatsapp.net'});
+    }
     if (endpoint.includes('/messages')) return response([]);
     if (endpoint.endsWith('/send')) return response({ok:true,translated:'Hvala vam'});
     if (endpoint==='/api/events') return response({});
@@ -54,6 +58,18 @@ test('Web UI discovers chats dynamically, switches contacts, and keeps recipient
     // Mobile layout has a single-column chat mode and optional back button.
     assert.match(readFileSync(new URL('../public/style.css',import.meta.url),'utf8'),/@media\(max-width:700px\)/);
     assert.ok(w.document.getElementById('mobile-back'));
+    assert.match(w.document.getElementById('chat-counter').textContent, /2/);
+    // A WhatsApp contact missing from initial synchronization can be selected by phone.
+    w.document.getElementById('add-phone').value='+382 67 123456';
+    w.document.getElementById('add-phone-form').dispatchEvent(
+      new w.Event('submit',{bubbles:true,cancelable:true})
+    );
+    await pause(60);
+    const adds=calls.filter(c=>c.endpoint==='/api/chats/by-phone');
+    assert.equal(adds.length,1);
+    assert.equal(JSON.parse(adds[0].opts.body).phone,'+382 67 123456');
+    assert.equal(w.document.getElementById('chat-name').textContent,'38267123456');
+    assert.match(w.document.getElementById('chat-counter').textContent,/3/);
   } finally {
     dom.window.close();
   }
