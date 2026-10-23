@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import Database from 'better-sqlite3';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage, Browsers } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import QRCode from 'qrcode';
 import { randomBytes, createHmac, scryptSync, timingSafeEqual, randomUUID, createHash } from 'node:crypto';
@@ -307,12 +307,9 @@ async function connectWhatsApp() {
       logger: log,
       printQRInTerminal: false,
       markOnlineOnConnect: false,
-      // Full-history sync from a desktop browser can be expensive on a 2GB VPS.
-      // Default to the known working lightweight linked-device profile.
-      // Explicitly opt in with WHATSAPP_FULL_SYNC=1 if the server has capacity.
-      ...(process.env.WHATSAPP_FULL_SYNC === '1'
-        ? { browser: Browsers.macOS('Desktop'), syncFullHistory: true }
-        : { syncFullHistory: false })
+      // No full-history request. WhatsApp may still send a lightweight
+      // initial metadata/history package; its message bodies are ignored.
+      syncFullHistory: false
     });
     wa = sock;
     // Persist rotating credentials in order. An immediate 515 restart must
