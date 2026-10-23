@@ -45,6 +45,7 @@
           <div id="chat-counter" class="chat-counter" aria-live="polite">Последние 20 собеседников</div>
           <label class="toggle-label"><input id="only-enabled" type="checkbox"> Только с переводом</label>
           <small class="muted">Только контакты последних личных чатов; прежние сообщения не загружаются.</small>
+          <button id="clear-contacts" type="button" class="secondary small">Очистить список контактов</button>
         </div>
         <div id="chat-list" class="chat-list" role="list"></div>
       </aside>
@@ -57,7 +58,10 @@
               <strong id="chat-name"></strong>
               <small id="chat-jid"></small>
             </div>
-            <label class="toggle-label"><input id="enable-chat" type="checkbox"> Перевод</label>
+            <div class="chat-actions">
+              <label class="toggle-label"><input id="enable-chat" type="checkbox"> Перевод</label>
+              <button id="remove-contact" type="button" class="secondary small">Убрать контакт</button>
+            </div>
           </div>
           <div class="langbar">
             <label for="target-language">Язык собеседника</label>
