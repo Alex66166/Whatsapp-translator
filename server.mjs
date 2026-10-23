@@ -15,7 +15,7 @@ import { migrateMessages, bindWhatsAppAck } from './lib/message-ledger.mjs';
 import { retireLinkedAuth } from './lib/auth-session.mjs';
 import { enforceStorageQuota, storageUsage } from './lib/storage-fifo.mjs';
 import { parseVcard } from './lib/vcard.mjs';
-import { RECENT_CHAT_LIMIT, chatMetadataTime, recentChats } from './lib/recent-chats.mjs';
+import { RECENT_CHAT_LIMIT, chatMetadataTime, recentChats, historicalChatRef } from './lib/recent-chats.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
@@ -94,11 +94,14 @@ function validChat(jid) {
 function shortJid(jid) { return jid.split('@')[0] || jid; }
 function touch(jid, name, timestamp = 0) {
   if (!validChat(jid)) return;
-  const label = typeof name === 'string' && name.trim() ? name.trim() : people.get(jid) || shortJid(jid);
+  const supplied = typeof name === 'string' && name.trim() ? name.trim().slice(0,160) : '';
+  const label = supplied || people.get(jid) || shortJid(jid);
   const existing = stmt.chat.get(jid);
   stmt.addChat.run(jid, label, DEFAULT_LANGUAGE, timestamp);
-  // Contact names outrank raw IDs, but a remote pushName must not erase a saved address-book name.
-  if (!existing || (label !== shortJid(jid) && (existing.title === shortJid(jid) || name))) {
+  // A short remote push name ("A") is not a saved phonebook name. Never
+  // replace an existing longer contact name with a less informative label.
+  if (!existing || (supplied && (existing.title === shortJid(jid) ||
+      supplied.length > existing.title.length || existing.title === supplied))) {
     stmt.title.run(label, jid);
   }
 }
@@ -112,8 +115,11 @@ function updateContact(contact, selected = new Set(recentChats(db).map(chat => c
   const ids = [contact.id, contact.lid, contact.phoneNumber];
   for (const jid of ids) {
     if (!validChat(jid) || !selected.has(jid)) continue;
-    people.set(jid, name);
-    stmt.title.run(name, jid);
+    const existing = stmt.chat.get(jid);
+    if (existing && (existing.title === shortJid(jid) || name.length >= existing.title.length)) {
+      people.set(jid, name);
+      stmt.title.run(name, jid);
+    }
   }
 }
 function updateChatMetadata(chat) {
@@ -347,14 +353,32 @@ async function connectWhatsApp() {
       // inspect, save, translate, or download historical message bodies.
       // Only read chat timestamps and names for the 20 most recent contacts.
       for (const chat of data.chats || []) updateChatMetadata(chat);
+      // The initial sync may provide message metadata but no chats[]. Read
+      // ONLY the key, timestamp and optional push name: old message bodies,
+      // images, attachments and captions are never stored or translated.
+      let indexed = 0;
+      for (const item of data.messages || []) {
+        const ref = historicalChatRef(item);
+        if (!ref) continue;
+        touch(ref.jid, ref.name, ref.timestamp);
+        indexed++;
+      }
       const recent = new Set(recentChats(db).map(chat => chat.jid));
       for (const person of data.contacts || []) updateContact(person, recent);
-      log.info({ chatMetadata: (data.chats || []).length,
-        recent: recentChats(db).length }, 'Recent WhatsApp chat metadata received');
+      log.info({ chatMetadata: (data.chats || []).length, messageMetadata: indexed,
+        recent: recentChats(db).length }, 'Recent WhatsApp contact metadata received');
       emit();
     });
     sock.ev.on('messages.upsert', data => {
-      // 'append' is old/history data. Ignore it entirely.
+      if (data.type === 'append') {
+        // Backfill events update contact recency, without reading message bodies.
+        for (const message of data.messages || []) {
+          const ref = historicalChatRef(message);
+          if (ref) touch(ref.jid, ref.name, ref.timestamp);
+        }
+        emit();
+        return;
+      }
       if (data.type !== 'notify') return;
       for (const message of data.messages || []) {
         try { ingest(message); }
