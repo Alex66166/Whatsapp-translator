@@ -8,7 +8,9 @@ from pathlib import Path
 
 
 def updated_config(source: str, previous_port: int, new_port: int) -> str:
-    if "# Configured by WhatsApp Translator deploy.sh" not in source:
+    managed_new = "# Configured by WhatsApp Translator deploy.sh" in source
+    managed_existing = "# WhatsApp Translator: отдельный сайт" in source
+    if not (managed_new or managed_existing):
         raise ValueError("Это не конфигурация Nginx нашего приложения")
     if not 1 <= new_port <= 65535 or not 1 <= previous_port <= 65535:
         raise ValueError("Недопустимый HTTPS-порт")
@@ -23,7 +25,7 @@ def updated_config(source: str, previous_port: int, new_port: int) -> str:
     )
     suffix = "" if new_port == 443 else ":" + str(new_port)
     result, found = redirect.subn(lambda m: m[1] + suffix + m[2], result, count=1)
-    if found != 1:
+    if found != 1 and managed_new:
         raise ValueError("Не найден HTTP→HTTPS редирект виртуального хоста")
     # .vcf files up to 2 MB must be accepted by Nginx.
     result = result.replace("client_max_body_size 32k;", "client_max_body_size 3m;")
