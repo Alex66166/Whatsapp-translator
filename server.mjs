@@ -17,6 +17,7 @@ import { enforceStorageQuota, storageUsage } from './lib/storage-fifo.mjs';
 import { parseVcard } from './lib/vcard.mjs';
 import { RECENT_CHAT_LIMIT, chatMetadataTime, recentChats, historicalChatRef } from './lib/recent-chats.mjs';
 import { incomingMessageState, outgoingMessageText } from './lib/message-policy.mjs';
+import { resetContactCache, hideContact } from './lib/contact-cache.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(HERE, process.env.DATA_DIR || '.data');
@@ -547,6 +548,33 @@ app.get('/api/chats', requireAuth, (req, res) => {
     jid: c.jid, title: c.title, enabled: !!c.enabled,
     targetLanguage: c.target_language, lastActivity: c.last_activity
   })));
+});
+app.delete('/api/contacts/:jid', requireAuth, (req, res) => {
+  const jid = req.params.jid;
+  if (!validChat(jid)) return res.status(400).json({ error: 'Invalid contact' });
+  try {
+    if (!hideContact(db, jid)) return res.status(404).json({ error: 'Contact not found' });
+    people.delete(jid);
+    emit();
+    return res.json({ ok: true });
+  } catch (error) {
+    log.error({ error: error.message }, 'Contact hide failed');
+    return res.status(500).json({ error: 'Contact was not removed' });
+  }
+});
+app.post('/api/contacts/reset', requireAuth, (req, res) => {
+  if (req.body?.confirm !== 'RESET') {
+    return res.status(400).json({ error: 'Type RESET to clear cached contacts' });
+  }
+  try {
+    const result = resetContactCache(db);
+    people.clear();
+    emit();
+    return res.json({ ok: true, removed: result.removed, anonymized: result.anonymized });
+  } catch (error) {
+    log.error({ error: error.message }, 'Contact cache reset failed');
+    return res.status(500).json({ error: 'Contact cache was not cleared' });
+  }
 });
 app.post('/api/contacts/import', requireAuth,
   express.text({ type: ['text/vcard', 'text/x-vcard'], limit: '2mb' }),
