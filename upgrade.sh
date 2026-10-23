@@ -25,7 +25,9 @@ PORT="$(sed -n 's/^PORT=//p' "$APP_DIR/.env" | tail -n 1)"
 NGINX_SITE="/etc/nginx/sites-available/$SERVICE.conf"
 NGINX_OWNED=0
 CURRENT_PUBLIC_PORT=443
-if [[ -f "$NGINX_SITE" ]] && grep -Fq '# Configured by WhatsApp Translator deploy.sh' "$NGINX_SITE"; then
+if [[ -f "$NGINX_SITE" ]] &&
+   { grep -Fq '# Configured by WhatsApp Translator deploy.sh' "$NGINX_SITE" ||
+     grep -Fq '# WhatsApp Translator: отдельный сайт' "$NGINX_SITE"; }; then
   NGINX_OWNED=1
   CURRENT_PUBLIC_PORT="$(sed -nE 's/^[[:space:]]*listen[[:space:]]+([0-9]+)[[:space:]]+ssl;.*/\1/p' "$NGINX_SITE" | head -n 1)"
   [[ "$CURRENT_PUBLIC_PORT" =~ ^[0-9]+$ ]] || { echo "Не удалось определить внешний порт Nginx"; exit 1; }
@@ -113,7 +115,8 @@ if count!=1: raise SystemExit("Не найден SSL listen для безопа�
 modified=modified.replace('client_max_body_size 32k;','client_max_body_size 3m;')
 port_suffix='' if new=='443' else ':'+new
 modified,n=re.subn(r'(return 301 https://\\$host)(?::[0-9]+)?(\\$request_uri;)',lambda m:m.group(1)+port_suffix+m.group(2),modified)
-if n!=1: raise SystemExit("Не найден редирект для безопасного изменения")
+if n!=1 and '# Configured by WhatsApp Translator deploy.sh' in data:
+    raise SystemExit("Не найден редирект для безопасного изменения")
 site.write_text(modified)
 PY
   nginx -t
