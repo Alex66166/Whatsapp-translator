@@ -66,7 +66,28 @@
           </div>
           <div class="langbar">
             <label for="target-language">Язык собеседника</label>
-            <input id="target-language" type="text" maxlength="100" placeholder="Montenegrin (Latin script, Ijekavian)">
+            <select id="target-language" aria-label="Язык для перевода">
+              <option value="Montenegrin (Latin script, Ijekavian)" selected>Черногорский — Montenegrin</option>
+              <option value="English">Английский — English</option>
+              <option value="Serbian (Latin script)">Сербский — Srpski</option>
+              <option value="Croatian">Хорватский — Hrvatski</option>
+              <option value="Bosnian (Latin script)">Боснийский — Bosanski</option>
+              <option value="German">Немецкий — Deutsch</option>
+              <option value="French">Французский — Français</option>
+              <option value="Italian">Итальянский — Italiano</option>
+              <option value="Spanish">Испанский — Español</option>
+              <option value="Portuguese">Португальский — Português</option>
+              <option value="Turkish">Турецкий — Türkçe</option>
+              <option value="Albanian">Албанский — Shqip</option>
+              <option value="Greek">Греческий — Ελληνικά</option>
+              <option value="Dutch">Нидерландский — Nederlands</option>
+              <option value="Polish">Польский — Polski</option>
+              <option value="Ukrainian">Украинский — Українська</option>
+              <option value="Romanian">Румынский — Română</option>
+              <option value="Arabic">Арабский — العربية</option>
+              <option value="Chinese (Simplified)">Китайский — 中文 (简体)</option>
+              <option value="Hindi">Хинди — हिन्दी</option>
+            </select>
             <button id="save-language" class="secondary small">Сохранить</button>
           </div>
           <div id="messages" class="messages" aria-live="polite"></div>
