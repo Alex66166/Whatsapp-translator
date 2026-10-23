@@ -14,7 +14,7 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -m 700 "$WORK/project"
 echo "WhatsApp Translator | Загрузка из GitHub..."
 curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --connect-timeout 15 --max-time 120 \
-  https://codeload.github.com/Alex66166/Whatsapp_translater/tar.gz/refs/heads/main \
+  https://codeload.github.com/Alex66166/Whatsapp-translator/tar.gz/refs/heads/main \
   -o "$WORK/project.tar.gz" || { echo "Ошибка: сделайте репозиторий публичным, проверьте сеть."; exit 1; }
 tar -tzf "$WORK/project.tar.gz" >/dev/null || { echo "Неверный архив"; exit 1; }
 tar -xzf "$WORK/project.tar.gz" --strip-components=1 -C "$WORK/project"
