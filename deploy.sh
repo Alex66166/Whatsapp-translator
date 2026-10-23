@@ -44,6 +44,7 @@ PORT="$((10#$PORT))"
 (( 10#$EXTERNAL_PORT >= 1 && 10#$EXTERNAL_PORT <= 65535 )) || { echo "Внешний порт: 1–65535"; exit 1; }
 EXTERNAL_PORT="$((10#$EXTERNAL_PORT))"
 [[ "$EXTERNAL_PORT" != "$PORT" ]] || { echo "Внешний и внутренний порты должны различаться"; exit 1; }
+[[ "$EXTERNAL_PORT" != 80 ]] || { echo "Порт 80 требуется для HTTP и выпуска сертификата; выберите другой HTTPS-порт"; exit 1; }
 [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ && "$DOMAIN" == *.* && "$DOMAIN" != -* ]] || { echo "Некорректный домен"; exit 1; }
 [[ "$PROXY_MODE" =~ ^(manual|nginx|nginx-existing|apache-existing|caddy-existing)$ ]] || { echo "Неизвестный режим reverse-proxy"; exit 1; }
 [[ "$APP_DIR" != "$SRC" && "$APP_DIR" != "$SRC/"* && "$SRC" != "$APP_DIR/"* ]] || { echo "Каталог установки не должен совпадать с каталогом исходников"; exit 1; }
