@@ -67,3 +67,8 @@ input[type=checkbox]{accent-color:#128468;width:17px;height:17px}.chat-list{over
 .contact-import input{width:100%;max-width:100%;font-size:11px}
 .contact-import small{color:#88948f;font-size:10px}
 @media(max-width:700px){.storage-status{display:none}}
+
+/* Compact contact management controls */
+.chat-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#clear-contacts{width:100%;font-size:12px}
+#remove-contact{font-size:12px}
