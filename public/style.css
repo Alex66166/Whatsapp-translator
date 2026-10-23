@@ -53,3 +53,10 @@ input[type=checkbox]{accent-color:#128468;width:17px;height:17px}.chat-list{over
 }
 
 .chat-photo{display:block;max-width:100%;max-height:480px;object-fit:contain;border-radius:8px;cursor:zoom-in;margin-bottom:8px}.photo-status{font-size:12px;color:#9b6b2d;padding-bottom:8px}
+
+.chat-counter{font-size:11px;color:#61726d;margin:-4px 0 2px}
+.add-phone-form{display:flex;flex-direction:column;gap:6px;border-top:1px solid #dfe8e5;padding-top:10px}
+.add-phone-form label{font-size:11px;line-height:1.4;color:#56655f}
+.add-phone-controls{display:flex;gap:5px;min-width:0}
+.add-phone-controls input{min-width:0;flex:1;padding:8px;font-size:12px}
+.add-phone-controls button{flex-shrink:0;font-size:12px;padding:7px}
